@@ -48,12 +48,3 @@ Thumbs.db
 *.user
 *.userosscache
 *.sln.docstates
-
-# PowerShell / Windows artifacts
-*.ps1xml
-*.psc1
-*.psd1
-*.psm1
-
-# Local runtime output
-bin/

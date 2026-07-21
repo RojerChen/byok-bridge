@@ -8,9 +8,15 @@ Current support status:
 
 | CLI | Status | Notes |
 | --- | --- | --- |
-| Copilot CLI | Supported | Primary target for now |
+| Copilot CLI | Supported (experimental) | Verified with GitHub Copilot CLI 1.0.73 |
 | Gemini CLI | Not supported | Not included in the integration scope |
 | Codex CLI | Not supported | Limited by the current execution environment |
+
+The launcher uses Copilot CLI's experimental extension API. Start Copilot with
+the bundled `--experimental` option, and expect that a future Copilot CLI update
+may require a compatibility update in this project. See GitHub's
+[Copilot CLI extension documentation](https://docs.github.com/en/enterprise-cloud@latest/copilot/concepts/agents/copilot-cli/about-cli-extensions)
+for the current feature status.
 
 If the environment or integration targets change later, this list will be updated.
 
@@ -20,8 +26,11 @@ Install the following first:
 
 - Windows 10/11
 - PowerShell 5.1 or later
-- The CLI you want to use, such as GitHub Copilot CLI, Aider, or any other CLI listed in the configuration file
-- The CLI command must be available in the `PATH` for CMD
+- GitHub Copilot CLI in the `PATH` for CMD
+
+GitHub Copilot CLI 1.0.73 is the currently verified version. Other versions may
+work, but should be treated as unverified because the extension API remains
+experimental.
 
 The provider must expose an OpenAI-compatible `/models` API. The API key can come from an environment variable or be entered at startup.
 
@@ -30,7 +39,7 @@ The provider must expose an OpenAI-compatible `/models` API. The API key can com
 Run this in the project directory:
 
 ```bat
-srcV3\bin\install.cmd
+bin\install.cmd
 ```
 
 The installer copies files to:
@@ -46,6 +55,10 @@ That directory includes:
 - `config\providers.example.json`: example configuration
 - `state.json`, `models-cache.json`: runtime state and model cache generated after execution
 
+Re-running the installer updates the bundled scripts and
+`providers.example.json`, but preserves an existing `providers.json`. On the
+first installation only, `providers.json` is initialized from the example.
+
 If the Copilot extension is installed, it will be placed here:
 
 ```text
@@ -54,13 +67,8 @@ If the Copilot extension is installed, it will be placed here:
 
 ## Provider setup
 
-Copy the example configuration:
-
-```bat
-copy "%USERPROFILE%\.byok-cli-hub\config\providers.example.json" "%USERPROFILE%\.byok-cli-hub\config\providers.json"
-```
-
-Then edit:
+The installer creates the following file on first installation. Edit it to add
+your providers:
 
 ```text
 %USERPROFILE%\.byok-cli-hub\config\providers.json
@@ -99,6 +107,13 @@ set "MY_PROVIDER_API_KEY=your-api-key"
 ```
 
 If no API key is found, you will be prompted to enter one at startup.
+
+## Distribution
+
+BYOK CLI Hub is distributed as a source-based Windows utility. It combines
+PowerShell management scripts with a Node.js Copilot CLI extension and is not
+published as an npm or NuGet package. The `package.json` file remains private
+and is used only for project metadata and local scripts.
 
 ## Launching
 

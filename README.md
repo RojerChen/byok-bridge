@@ -2,6 +2,8 @@
 
 BYOK CLI Hub lets you choose a provider and model when launching an AI CLI, and applies the matching environment variables to the current CMD window.
 
+Current version: `0.0.1`
+
 ## Supported CLIs
 
 Current support status:
@@ -59,10 +61,48 @@ Re-running the installer updates the bundled scripts and
 `providers.example.json`, but preserves an existing `providers.json`. On the
 first installation only, `providers.json` is initialized from the example.
 
+The installer also adds `%USERPROFILE%\.byok-cli-hub` to the current user's
+`PATH` and installs a `byok-cli-hub.cmd` command shim. Open a new terminal after
+the first installation if the command is not immediately available.
+
+To install without changing the user `PATH`, set
+`BYOK_CLI_HUB_SKIP_PATH_UPDATE=1` before running the installer. The full-path
+launcher remains available in that mode.
+
 If the Copilot extension is installed, it will be placed here:
 
 ```text
 %USERPROFILE%\.copilot\extensions\byok-cli-hub-copilot\
+```
+
+### Which `run.cmd` should I use?
+
+After installation, use the installed launcher:
+
+```bat
+byok-cli-hub
+```
+
+This is a local copy created by `install.cmd`; it does not call or download a
+remote script.
+
+The repository contains another launcher at `bin\run.cmd`. It is intended for
+development and executes the manager scripts directly from the current source
+tree. The installed launcher instead executes the snapshot copied under
+`%USERPROFILE%\.byok-cli-hub\`, so it continues to work if the repository is
+moved or deleted.
+
+Both launchers use the same user configuration, state, and model cache under
+`%USERPROFILE%\.byok-cli-hub\`. Avoid switching between them while developing:
+the source manager may be newer than the installed Copilot extension. Re-run
+`bin\install.cmd` after updating the repository to synchronize the installed
+manager, launcher, example configuration, and extension.
+
+If `byok-cli-hub` is not found after opening a new terminal, use the full-path
+fallback:
+
+```bat
+call "%USERPROFILE%\.byok-cli-hub\run.cmd"
 ```
 
 ## Provider setup
@@ -117,10 +157,10 @@ and is used only for project metadata and local scripts.
 
 ## Launching
 
-Run this in CMD:
+After installation, run the recommended local installed launcher in CMD:
 
 ```bat
-call "%USERPROFILE%\.byok-cli-hub\run.cmd"
+byok-cli-hub
 ```
 
 The startup flow will ask you to choose:
@@ -133,7 +173,7 @@ The startup flow will ask you to choose:
 You can also pass options directly:
 
 ```bat
-call "%USERPROFILE%\.byok-cli-hub\run.cmd" -Cli copilot -Provider my-provider -Model my-model
+byok-cli-hub -Cli copilot -Provider my-provider -Model my-model
 ```
 
 The first launch will call the provider's `/models` API and cache the result in `models-cache.json`.
@@ -162,7 +202,13 @@ To update the model cache without launching the CLI:
 
 ## Removal
 
-Delete the following directories to remove BYOK CLI Hub data and settings:
+First remove the installation directory from the user `PATH`:
+
+```powershell
+& "$env:USERPROFILE\.byok-cli-hub\manager\update-user-path.ps1" -Directory "$env:USERPROFILE\.byok-cli-hub" -Remove
+```
+
+Then delete the following directories to remove BYOK CLI Hub data and settings:
 
 ```text
 %USERPROFILE%\.byok-cli-hub\

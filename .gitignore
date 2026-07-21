@@ -1,0 +1,59 @@
+# Node / package managers
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm/
+.pnpm-store/
+.parcel-cache/
+.turbo/
+
+# Build / coverage / caches
+dist/
+build/
+coverage/
+.nyc_output/
+.cache/
+.tmp/
+tmp/
+out/
+release/
+
+# Local runtime data
+state.json
+models-cache.json
+*.cache.json
+*.bak
+*.swp
+
+# Environment files
+.env
+.env.*
+!.env.example
+*.local
+
+# Logs
+logs/
+*.log
+*.trace
+*.err
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# PowerShell / Windows artifacts
+*.ps1xml
+*.psc1
+*.psd1
+*.psm1
+
+# Local runtime output
+bin/

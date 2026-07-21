@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "clis": {
+    "copilot": {
+      "name": "GitHub Copilot CLI",
+      "command": "copilot",
+      "args": ["--experimental"],
+      "modelEnvName": "COPILOT_MODEL",
+      "defaultApiKeyEnv": ["COPILOT_PROVIDER_API_KEY"],
+      "defaultModelEnvNames": ["COPILOT_MODEL"],
+      "environment": {
+        "COPILOT_PROVIDER_BASE_URL": "{url}",
+        "COPILOT_PROVIDER_API_KEY": "{api_key}",
+        "COPILOT_PROVIDER_TYPE": "openai",
+        "COPILOT_MODEL": "{model}",
+        "BYOK_MODEL_PROVIDER_ID": "{provider_id}"
+      }
+    }
+  },
+  "providers": {
+    "openai-compatible": {
+      "name": "OpenAI-compatible provider (example)",
+      "enabled": true,
+      "type": "openai",
+      "baseUrl": "http://localhost:1234/v1",
+      "apiKeyRequired": false,
+      "modelCacheTtlSeconds": 3600,
+      "apiKeyEnv": ["COPILOT_PROVIDER_API_KEY", "OPENAI_API_KEY"],
+      "modelEnvNames": ["COPILOT_MODEL"],
+      "apiKeyHeader": "Authorization",
+      "apiKeyPrefix": "Bearer ",
+      "modelsApi": {
+        "path": "/models",
+        "itemsPath": "data",
+        "idPath": "id"
+      },
+      "environment": {}
+    }
+  }
+}

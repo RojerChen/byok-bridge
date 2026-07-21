@@ -1,0 +1,47 @@
+import { getDataDir, readCache, readState, writeState } from "../lib/shared.mjs";
+
+export async function runByokModelCommand(session, rawArgs = "") {
+  const dataDir = getDataDir();
+  const state = readState(dataDir);
+  if (!state?.providerId) {
+    await session.log("No provider state was found. Run the BYOK selector wrapper first.", { level: "error" });
+    return;
+  }
+
+  const argument = rawArgs.trim().toLowerCase();
+  const cacheEntry = readCache(dataDir).caches?.[state.providerId];
+  const models = (cacheEntry?.models || [])
+    .filter((item) => item.available)
+    .map((item) => item.id);
+
+  if (argument === "info") {
+    await session.log(`Provider: ${state.providerName || state.providerId} | Model: ${state.model || "(not set)"}`, { level: "info" });
+    return;
+  }
+
+  if (!session.capabilities?.ui?.elicitation) {
+    await session.log("Interactive model selection is not available in this CLI host. Use /model_byok info for current state.", { level: "error" });
+    return;
+  }
+
+  if (models.length === 0) {
+    await session.log("No models were loaded yet. Run the BYOK selector wrapper to prefetch models first.", { level: "error" });
+    return;
+  }
+
+  const selected = await session.ui.select("Select a model", models);
+  if (!selected) {
+    await session.log("Model selection cancelled.", { level: "info" });
+    return;
+  }
+
+  try {
+    await session.setModel(selected);
+  } catch (error) {
+    await session.log(`Unable to switch model: ${error instanceof Error ? error.message : String(error)}`, { level: "error" });
+    return;
+  }
+
+  writeState({ ...state, model: selected, updatedAt: new Date().toISOString() }, dataDir);
+  await session.log(`Selected model: ${selected}`, { level: "info" });
+}

@@ -1,0 +1,10 @@
+{
+  "name": "byok-cli-hub",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Configuration-driven BYOK launcher and hub for multiple AI CLIs",
+  "scripts": {
+    "smoke": "powershell -NoProfile -ExecutionPolicy Bypass -File manager/smoke-test.ps1"
+  }
+}

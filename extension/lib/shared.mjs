@@ -7,8 +7,14 @@ import path from "node:path";
 // files the manager wrote and write back state on model switch.
 
 export function getDataDir() {
-  const override = process.env.BYOK_CLI_HUB_DATA_DIR?.trim() || process.env.BYOK_MODEL_V3_DATA_DIR?.trim();
-  if (override) return path.resolve(override);
+  let override = process.env.BYOK_CLI_HUB_DATA_DIR?.trim() || process.env.BYOK_MODEL_V3_DATA_DIR?.trim();
+  if (override) {
+    // Ignore Windows-style absolute/backslash paths on Linux/WSL
+    if (process.platform !== 'win32' && (/^[A-Za-z]:\\/.test(override) || override.includes('\\'))) {
+      override = null;
+    }
+    if (override) return path.resolve(override);
+  }
   const current = path.join(os.homedir(), ".byok-cli-hub");
   const legacy = path.join(os.homedir(), ".copilot", "byok-model-v3");
   return fs.existsSync(current) || !fs.existsSync(legacy) ? current : legacy;

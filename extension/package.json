@@ -1,0 +1,8 @@
+{
+  "name": "byok-cli-hub-copilot",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "extension.mjs",
+  "description": "GitHub Copilot CLI extension for switching preloaded BYOK models"
+}

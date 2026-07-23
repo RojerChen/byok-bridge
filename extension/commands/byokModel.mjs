@@ -10,9 +10,10 @@ export async function runByokModelCommand(session, rawArgs = "") {
 
   const argument = rawArgs.trim().toLowerCase();
   const cacheEntry = readCache(dataDir).caches?.[state.providerId];
-  const models = (cacheEntry?.models || [])
-    .filter((item) => item.available)
-    .map((item) => item.id);
+  const rawModels = cacheEntry?.models || [];
+  const models = rawModels
+    .filter((item) => (typeof item === "string" ? true : item?.available !== false))
+    .map((item) => (typeof item === "string" ? item : item.id));
 
   if (argument === "info") {
     await session.log(`Provider: ${state.providerName || state.providerId} | Model: ${state.model || "(not set)"}`, { level: "info" });

@@ -1,0 +1,14 @@
+# Set default behavior to automatic text line ending normalization.
+* text=auto
+
+# Unix / Linux scripts and Node ESM
+*.sh                 text eol=lf
+*.mjs                text eol=lf
+*.json               text eol=lf
+*.md                 text eol=lf
+bin/linux/byok-cli-hub text eol=lf
+
+# Windows scripts
+*.cmd                text eol=crlf
+*.ps1                text eol=crlf
+*.psm1               text eol=crlf

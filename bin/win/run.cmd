@@ -7,10 +7,10 @@ set "PSEXE=pwsh"
 where pwsh >nul 2>nul
 if errorlevel 1 set "PSEXE=powershell"
 
-rem The source launcher lives in bin\, while install.cmd copies it next to
+rem The source launcher lives in bin\win\, while install.cmd copies it next to
 rem manager\. Resolve both layouts without generating a persistent config.
 set "ROOT=%~dp0"
-if not exist "%ROOT%manager\start-byok-cli-hub.ps1" set "ROOT=%~dp0..\"
+if not exist "%ROOT%manager\start-byok-cli-hub.ps1" set "ROOT=%~dp0..\..\"
 
 set "ENV_FILE=%TEMP%\byok-cli-hub-env-%RANDOM%.cmd"
 

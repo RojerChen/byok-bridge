@@ -1,6 +1,6 @@
 @echo off
 setlocal
-set "ROOT=%~dp0..\"
+set "ROOT=%~dp0..\..\"
 set "TARGET_DIR=%USERPROFILE%\.byok-cli-hub"
 set "EXTENSION_DIR=%USERPROFILE%\.copilot\extensions\byok-cli-hub-copilot"
 

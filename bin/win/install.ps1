@@ -121,8 +121,14 @@ if (Test-Path -LiteralPath $existingManifest) {
     Assert-NotOverlapping 'application dir' $targetDir 'manifest data dir' $manifestDataDir
     Assert-NotOverlapping 'application dir' $targetDir 'manifest extension dir' $manifestExtensionDir
     Assert-NotOverlapping 'manifest data dir' $manifestDataDir 'manifest extension dir' $manifestExtensionDir
-    if (-not $env:BYOK_CLI_HUB_DATA_DIR) { $dataDir = $manifestDataDir }
-    if (-not $env:COPILOT_HOME) { $extensionDir = $manifestExtensionDir }
+    if ($env:BYOK_CLI_HUB_DATA_DIR -and -not $dataDir.Equals($manifestDataDir, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'A managed update cannot relocate the data directory. Uninstall and reinstall to choose a new path.'
+    }
+    if ($env:COPILOT_HOME -and -not $extensionDir.Equals($manifestExtensionDir, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'A managed update cannot relocate the extension directory. Uninstall and reinstall to choose a new COPILOT_HOME.'
+    }
+    $dataDir = $manifestDataDir
+    $extensionDir = $manifestExtensionDir
     if ($previous.withExtension) { $WithExtension = $true }
     Assert-SafePath 'data dir' $dataDir
     Assert-SafePath 'extension dir' $extensionDir
@@ -154,29 +160,15 @@ if ($isLegacyMigration -and $legacyExtensionRecognized) {
     Write-Warning "Preserving unowned extension '$extensionDir'; it will not be recorded in the install manifest."
 }
 
-New-Item -ItemType Directory -Force -Path $appRoot, $dataDir | Out-Null
-
-# Validate the config before creating or replacing the canonical path.
-Import-Module (Join-Path $sourceRoot 'manager\ByokManager.psm1') -DisableNameChecking -Force -ErrorAction Stop
 $legacyConfig = Join-Path $dataDir 'config\providers.json'
 $configPath = Join-Path $dataDir 'providers.json'
+$examplePath = Join-Path $dataDir 'providers.example.json'
+$appRootExisted = Test-Path -LiteralPath $appRoot
+$dataDirExisted = Test-Path -LiteralPath $dataDir
+$exampleExisted = Test-Path -LiteralPath $examplePath
+$exampleBytes = if ($exampleExisted) { [IO.File]::ReadAllBytes($examplePath) } else { $null }
+$exampleTouched = $false
 $createdCanonicalConfig = $false
-if (Test-Path -LiteralPath $configPath) {
-    $configValue = Get-Content -Raw -LiteralPath $configPath -Encoding UTF8 | ConvertFrom-Json
-    Assert-ByokProviderConfig $configValue | Out-Null
-} else {
-    $sourceConfig = if (Test-Path -LiteralPath $legacyConfig) { $legacyConfig } else { Join-Path $sourceRoot 'config\providers.example.json' }
-    try {
-        $configValue = Get-Content -Raw -LiteralPath $sourceConfig -Encoding UTF8 | ConvertFrom-Json
-    } catch {
-        throw "Invalid provider configuration '$sourceConfig': $($_.Exception.Message)"
-    }
-    Assert-ByokProviderConfig $configValue | Out-Null
-    Write-ByokJsonAtomic $configPath $configValue
-    $createdCanonicalConfig = $true
-    Write-Host "Initialized provider configuration: $configPath"
-}
-
 $transactionId = [Guid]::NewGuid().ToString('N')
 $stagingDir = Join-Path $appRoot "app.staging.$transactionId"
 $backupDir = Join-Path $appRoot "app.backup.$transactionId"
@@ -189,12 +181,31 @@ $appBackupCreated = $false
 $appInstalled = $false
 $extensionBackupCreated = $false
 $extensionInstalled = $false
-$legacyFilesMoved = $false
 $pathTouched = $false
 $originalUserPath = Get-UserPathValue
 $testPathFileExisted = [bool]($env:BYOK_CLI_HUB_TEST_USER_PATH_FILE -and (Test-Path -LiteralPath $env:BYOK_CLI_HUB_TEST_USER_PATH_FILE))
 
 try {
+    New-Item -ItemType Directory -Force -Path $appRoot, $dataDir | Out-Null
+
+    # Validate the config before creating or replacing the canonical path.
+    Import-Module (Join-Path $sourceRoot 'manager\ByokManager.psm1') -DisableNameChecking -Force -ErrorAction Stop
+    if (Test-Path -LiteralPath $configPath) {
+        $configValue = Get-Content -Raw -LiteralPath $configPath -Encoding UTF8 | ConvertFrom-Json
+        Assert-ByokProviderConfig $configValue | Out-Null
+    } else {
+        $sourceConfig = if (Test-Path -LiteralPath $legacyConfig) { $legacyConfig } else { Join-Path $sourceRoot 'config\providers.example.json' }
+        try {
+            $configValue = Get-Content -Raw -LiteralPath $sourceConfig -Encoding UTF8 | ConvertFrom-Json
+        } catch {
+            throw "Invalid provider configuration '$sourceConfig': $($_.Exception.Message)"
+        }
+        Assert-ByokProviderConfig $configValue | Out-Null
+        Write-ByokJsonAtomic $configPath $configValue
+        $createdCanonicalConfig = $true
+        Write-Host "Initialized provider configuration: $configPath"
+    }
+
     New-Item -ItemType Directory -Path $stagingDir | Out-Null
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'manager') -Destination $stagingDir -Recurse
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'config') -Destination $stagingDir -Recurse
@@ -254,9 +265,11 @@ try {
         New-Item -ItemType Directory -Path $legacyBackup | Out-Null
         foreach ($name in @('manager', 'run.cmd', 'byok-cli-hub.cmd', 'README.md', 'package.json')) {
             $legacyPath = Join-Path $dataDir $name
-            if (Test-Path -LiteralPath $legacyPath) { Move-Item -LiteralPath $legacyPath -Destination (Join-Path $legacyBackup $name) }
+            if (Test-Path -LiteralPath $legacyPath) {
+                Move-Item -LiteralPath $legacyPath -Destination (Join-Path $legacyBackup $name)
+                Invoke-FailurePoint "after-legacy-move-$name"
+            }
         }
-        $legacyFilesMoved = $true
     }
 
     $pathScript = Join-Path $targetDir 'manager\update-user-path.ps1'
@@ -274,7 +287,8 @@ try {
         New-Item -ItemType File -Path $dataMarkerPath | Out-Null
         $createdDataMarker = $true
     }
-    Copy-Item -LiteralPath (Join-Path $sourceRoot 'config\providers.example.json') -Destination (Join-Path $dataDir 'providers.example.json') -Force
+    $exampleTouched = $true
+    Copy-Item -LiteralPath (Join-Path $sourceRoot 'config\providers.example.json') -Destination $examplePath -Force
 
     Invoke-FailurePoint 'before-backup-cleanup'
     Remove-Item -LiteralPath $backupDir, $extensionBackup, $legacyBackup -Recurse -Force -ErrorAction SilentlyContinue
@@ -283,10 +297,12 @@ try {
     if ($pathTouched) {
         try { Restore-UserPathValue $originalUserPath $testPathFileExisted } catch { Write-Warning "Failed to restore user PATH: $($_.Exception.Message)" }
     }
-    if ($legacyFilesMoved -and (Test-Path -LiteralPath $legacyBackup)) {
+    if (Test-Path -LiteralPath $legacyBackup) {
         foreach ($item in Get-ChildItem -LiteralPath $legacyBackup -Force) {
             $restorePath = Join-Path $dataDir $item.Name
-            if (-not (Test-Path -LiteralPath $restorePath)) { Move-Item -LiteralPath $item.FullName -Destination $restorePath }
+            if (-not (Test-Path -LiteralPath $restorePath)) {
+                try { Move-Item -LiteralPath $item.FullName -Destination $restorePath } catch { Write-Warning "Failed to restore legacy item '$($item.Name)': $($_.Exception.Message)" }
+            }
         }
     }
     if ($extensionInstalled -and (Test-Path -LiteralPath $extensionDir)) {
@@ -303,9 +319,22 @@ try {
     }
     if ($createdDataMarker) { Remove-Item -LiteralPath $dataMarkerPath -Force -ErrorAction SilentlyContinue }
     if ($createdCanonicalConfig) { Remove-Item -LiteralPath $configPath -Force -ErrorAction SilentlyContinue }
+    if ($exampleTouched) {
+        if ($exampleExisted) { [IO.File]::WriteAllBytes($examplePath, $exampleBytes) }
+        else { Remove-Item -LiteralPath $examplePath -Force -ErrorAction SilentlyContinue }
+    }
+    if (-not $dataDirExisted -and (Test-Path -LiteralPath $dataDir) -and -not (Get-ChildItem -LiteralPath $dataDir -Force)) {
+        Remove-Item -LiteralPath $dataDir -Force -ErrorAction SilentlyContinue
+    }
+    if (-not $appRootExisted -and (Test-Path -LiteralPath $appRoot) -and -not (Get-ChildItem -LiteralPath $appRoot -Force)) {
+        Remove-Item -LiteralPath $appRoot -Force -ErrorAction SilentlyContinue
+    }
     throw $failure
 } finally {
-    Remove-Item -LiteralPath $stagingDir, $extensionStaging, $legacyBackup -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $stagingDir, $extensionStaging -Recurse -Force -ErrorAction SilentlyContinue
+    if ((Test-Path -LiteralPath $legacyBackup) -and -not (Get-ChildItem -LiteralPath $legacyBackup -Force)) {
+        Remove-Item -LiteralPath $legacyBackup -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Write-Host 'Installation complete.' -ForegroundColor Green

@@ -57,6 +57,15 @@ function New-Legacy001Fixture([string]$CaseRoot, [switch]$InvalidConfig, [switch
 
 try {
     # Fresh install, managed update, failure injection, uninstall, and purge.
+    Set-TestEnvironment (Join-Path $testRoot 'fresh-rollback')
+    $env:BYOK_CLI_HUB_TEST_FAIL_AT = 'after-app-backup'
+    $failed = $false
+    try { & $installer -WithExtension } catch { $failed = $true }
+    Remove-Item Env:\BYOK_CLI_HUB_TEST_FAIL_AT -ErrorAction SilentlyContinue
+    Assert-True $failed 'Injected fresh-install failure unexpectedly succeeded.'
+    Assert-True (-not (Test-Path -LiteralPath $dataRoot)) 'Fresh-install rollback left initialized data behind.'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $appRoot 'app'))) 'Fresh-install rollback left an application snapshot.'
+
     Set-TestEnvironment (Join-Path $testRoot 'fresh')
     & $installer -WithExtension
     & $installer
@@ -73,6 +82,14 @@ try {
     Assert-True (Test-Path -LiteralPath (Join-Path $extensionDir '.byok-cli-hub-managed')) 'Extension marker missing.'
     Assert-True ((Get-TestPathEntries) -contains $appDir) 'Application PATH entry missing.'
 
+    $originalCopilotHome = $copilotHome
+    $env:COPILOT_HOME = Join-Path (Split-Path -Parent $copilotHome) 'relocated-copilot-home'
+    $failed = $false
+    try { & $installer } catch { $failed = $true }
+    $env:COPILOT_HOME = $originalCopilotHome
+    Assert-True $failed 'Managed update unexpectedly relocated the extension directory.'
+    Assert-True (Test-Path -LiteralPath (Join-Path $extensionDir '.byok-cli-hub-managed')) 'Relocation rejection damaged the managed extension.'
+
     $manifestBytes = [IO.File]::ReadAllBytes($manifestPath)
     $newerManifest = $manifest
     $newerManifest.appVersion = '0.0.3'
@@ -85,6 +102,8 @@ try {
     foreach ($failurePoint in @('after-app-backup', 'after-extension-backup', 'installed-smoke', 'after-path-remove', 'before-backup-cleanup')) {
         Set-Content -LiteralPath (Join-Path $appDir 'rollback-sentinel.txt') -Value $failurePoint -Encoding UTF8
         Set-Content -LiteralPath (Join-Path $extensionDir 'rollback-sentinel.txt') -Value $failurePoint -Encoding UTF8
+        $examplePath = Join-Path $dataRoot 'providers.example.json'
+        [IO.File]::WriteAllText($examplePath, "example=$failurePoint", (New-Object Text.UTF8Encoding $false))
         $pathBefore = [IO.File]::ReadAllText($pathFile, [Text.Encoding]::UTF8)
         $env:BYOK_CLI_HUB_TEST_FAIL_AT = $failurePoint
         $failed = $false
@@ -94,6 +113,7 @@ try {
         Assert-True ((Get-Content -Raw -LiteralPath (Join-Path $appDir 'rollback-sentinel.txt')).Trim() -eq $failurePoint) "Application rollback failed at '$failurePoint'."
         Assert-True ((Get-Content -Raw -LiteralPath (Join-Path $extensionDir 'rollback-sentinel.txt')).Trim() -eq $failurePoint) "Extension rollback failed at '$failurePoint'."
         Assert-True ([IO.File]::ReadAllText($pathFile, [Text.Encoding]::UTF8) -eq $pathBefore) "PATH rollback failed at '$failurePoint'."
+        Assert-True ([IO.File]::ReadAllText($examplePath, [Text.Encoding]::UTF8) -eq "example=$failurePoint") "Data example rollback failed at '$failurePoint'."
     }
 
     & (Join-Path $appDir 'uninstall.ps1')
@@ -120,6 +140,18 @@ try {
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $appRoot 'app'))) 'Rolled-back migration left a new application snapshot.'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $copilotHome 'extensions\byok-cli-hub-copilot\.byok-cli-hub-managed'))) 'Rolled-back migration claimed the legacy extension.'
     Assert-True ([IO.File]::ReadAllText($pathFile, [Text.Encoding]::UTF8) -eq $legacyPathBefore) 'Legacy PATH was not restored after rollback.'
+
+    # A failure during the legacy move loop must restore items already moved.
+    New-Legacy001Fixture (Join-Path $testRoot 'legacy-mid-move-rollback')
+    $env:BYOK_CLI_HUB_TEST_FAIL_AT = 'after-legacy-move-run.cmd'
+    $failed = $false
+    try { & $installer } catch { $failed = $true }
+    Remove-Item Env:\BYOK_CLI_HUB_TEST_FAIL_AT -ErrorAction SilentlyContinue
+    Assert-True $failed 'Mid-move legacy failure injection did not fail.'
+    Assert-True (Test-Path -LiteralPath (Join-Path $dataRoot 'manager')) 'Mid-move rollback did not restore the legacy manager.'
+    Assert-True (Test-Path -LiteralPath (Join-Path $dataRoot 'run.cmd')) 'Mid-move rollback did not restore run.cmd.'
+    Assert-True (Test-Path -LiteralPath (Join-Path $dataRoot 'byok-cli-hub.cmd')) 'Mid-move rollback damaged an unmoved legacy launcher.'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $dataRoot 'providers.json'))) 'Mid-move rollback left canonical config behind.'
 
     # Public 0.0.1 Windows layout migration.
     New-Legacy001Fixture (Join-Path $testRoot 'legacy')

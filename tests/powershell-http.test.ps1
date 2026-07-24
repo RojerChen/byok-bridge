@@ -12,11 +12,17 @@ function Get-FreeTcpPort {
     try { return ([Net.IPEndPoint]$listener.LocalEndpoint).Port } finally { $listener.Stop() }
 }
 
-function Start-HttpFixture([int]$Status, [string]$ContentType, [string]$Body, [string]$Location = '') {
+function Start-HttpFixture(
+    [int]$Status,
+    [string]$ContentType,
+    [string]$Body,
+    [string]$Location = '',
+    [int]$BodyDelayMilliseconds = 0
+) {
     $port = Get-FreeTcpPort
     $ready = Join-Path $env:TEMP "byok-http-ready-$PID-$port"
-    $job = Start-Job -ArgumentList $port, $ready, $Status, $ContentType, $Body, $Location -ScriptBlock {
-        param($Port, $Ready, $StatusCode, $ResponseContentType, $ResponseBody, $RedirectLocation)
+    $job = Start-Job -ArgumentList $port, $ready, $Status, $ContentType, $Body, $Location, $BodyDelayMilliseconds -ScriptBlock {
+        param($Port, $Ready, $StatusCode, $ResponseContentType, $ResponseBody, $RedirectLocation, $DelayMilliseconds)
         $listener = New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback, $Port)
         try {
             $listener.Start()
@@ -33,6 +39,8 @@ function Start-HttpFixture([int]$Status, [string]$ContentType, [string]$Body, [s
                 $headers += "`r`n"
                 $headerBytes = [Text.Encoding]::ASCII.GetBytes($headers)
                 $stream.Write($headerBytes, 0, $headerBytes.Length)
+                $stream.Flush()
+                if ($DelayMilliseconds -gt 0) { Start-Sleep -Milliseconds $DelayMilliseconds }
                 $stream.Write($bodyBytes, 0, $bodyBytes.Length)
                 $stream.Flush()
             } finally {
@@ -93,6 +101,29 @@ try {
         $failed = $false
         try { Invoke-ByokModelFetch (New-TestProvider) "http://127.0.0.1:$($fixture.Port)/v1" '' 10 64 | Out-Null } catch { $failed = $_.Exception.Message -match 'exceeds' }
         if (-not $failed) { throw 'Oversized response was not rejected.' }
+    } finally { Stop-HttpFixture $fixture }
+
+    foreach ($emptyBody in @('{"data":[]}', '[]')) {
+        $fixture = Start-HttpFixture 200 'application/json' $emptyBody
+        try {
+            $ids = @(Invoke-ByokModelFetch (New-TestProvider) "http://127.0.0.1:$($fixture.Port)/v1" '')
+            if ($ids.Count -ne 0) { throw "Empty model payload returned $($ids.Count) IDs." }
+        } finally { Stop-HttpFixture $fixture }
+    }
+
+    $fixture = Start-HttpFixture 200 'application/json' '{"data":[{"id":"slow-model"}]}' '' 5000
+    try {
+        $timer = [Diagnostics.Stopwatch]::StartNew()
+        $failed = $false
+        try {
+            Invoke-ByokModelFetch (New-TestProvider) "http://127.0.0.1:$($fixture.Port)/v1" '' 1 | Out-Null
+        } catch {
+            $failed = $_.Exception.Message -match 'timed out'
+        } finally {
+            $timer.Stop()
+        }
+        if (-not $failed) { throw 'A stalled response body did not time out.' }
+        if ($timer.Elapsed.TotalSeconds -gt 3) { throw "Body timeout took $([Math]::Round($timer.Elapsed.TotalSeconds, 2)) seconds." }
     } finally { Stop-HttpFixture $fixture }
 
     Write-Host 'PowerShell HTTP validation tests passed.' -ForegroundColor Green

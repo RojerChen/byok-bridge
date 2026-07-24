@@ -7,6 +7,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 
 import { readCache, updateCacheForProvider } from '../manager/lib/state.mjs';
+import { withFileLock } from '../extension/lib/file-lock.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -23,6 +24,14 @@ function run(command, args) {
       else reject(new Error(`${command} exited ${code}: ${stderr || stdout}`));
     });
   });
+}
+
+async function waitForFile(filePath, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!fs.existsSync(filePath)) {
+    if (Date.now() >= deadline) throw new Error(`Timed out waiting for fixture file '${filePath}'.`);
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
 }
 
 test('Node and PowerShell preserve concurrent provider cache updates', {
@@ -94,6 +103,62 @@ test('Node and PowerShell recover an abandoned cache lock', async () => {
     assert.equal(cache.caches['node-recovered'].models[0].id, 'node-model');
     if (process.platform === 'win32') assert.equal(cache.caches['powershell-recovered'].models[0].id, 'powershell-model');
   } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('Node and PowerShell honor their deadlines for an active aged exclusive lock', {
+  skip: process.platform !== 'win32'
+}, async () => {
+  const powershell = 'powershell.exe';
+  const available = spawnSync(powershell, ['-NoProfile', '-Command', 'exit 0']);
+  if (available.status !== 0) return;
+
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'byok-active-aged-lock-'));
+  const cachePath = path.join(dataDir, 'models-cache.json');
+  const lockPath = `${cachePath}.lock`;
+  const readyPath = path.join(dataDir, 'holder.ready');
+  fs.writeFileSync(lockPath, '2147483647 2000-01-01T00:00:00.000Z\n', { mode: 0o600 });
+  const stale = new Date(Date.now() - 60_000);
+  fs.utimesSync(lockPath, stale, stale);
+
+  const psLockPath = lockPath.replaceAll("'", "''");
+  const psReadyPath = readyPath.replaceAll("'", "''");
+  const holderScript = [
+    `$lockPath = '${psLockPath}'`,
+    `$readyPath = '${psReadyPath}'`,
+    '$stream = [IO.File]::Open($lockPath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)',
+    'try { [IO.File]::WriteAllText($readyPath, "ready"); Start-Sleep -Seconds 8 } finally { $stream.Dispose() }'
+  ].join('; ');
+  const holder = spawn(powershell, ['-NoProfile', '-Command', holderScript], {
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+
+  try {
+    await waitForFile(readyPath);
+
+    const nodeStarted = Date.now();
+    assert.throws(
+      () => withFileLock(cachePath, () => {}, 500, 0),
+      /Timed out waiting for data lock/
+    );
+    const nodeElapsed = Date.now() - nodeStarted;
+    assert.ok(nodeElapsed >= 400 && nodeElapsed < 2000, `Node deadline elapsed ${nodeElapsed}ms`);
+
+    const psModule = path.join(repoRoot, 'manager', 'ByokManager.psm1').replaceAll("'", "''");
+    const psDataDir = dataDir.replaceAll("'", "''");
+    const contenderScript = `Import-Module '${psModule}' -DisableNameChecking; Update-ByokCacheForProvider -ProviderId 'blocked' -BaseUrl 'https://example.test/v1' -ApiPath '/models' -ModelIds @('m') -DataDir '${psDataDir}' | Out-Null`;
+    const psStarted = Date.now();
+    await assert.rejects(run(powershell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', contenderScript]), /Timed out waiting for data lock/);
+    const psElapsed = Date.now() - psStarted;
+    assert.ok(psElapsed >= 2500 && psElapsed < 5000, `PowerShell deadline elapsed ${psElapsed}ms`);
+  } finally {
+    if (holder.exitCode === null) {
+      await new Promise(resolve => {
+        holder.once('close', resolve);
+        holder.kill();
+      });
+    }
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
 });

@@ -24,8 +24,12 @@ function buildModelsUrl(baseUrl, apiPath) {
   if (parsed.username || parsed.password) throw new Error('Base URL must not contain embedded credentials.');
   if (parsed.search || parsed.hash) throw new Error('Base URL must not contain a query string or fragment.');
 
+  const rawPath = String(apiPath || '/models');
+  if (/[\u0000-\u001f\u007f?#]/.test(rawPath)) {
+    throw new Error('Models API path must not contain control characters, a query, or a fragment.');
+  }
   const cleanBase = parsed.toString().replace(/\/+$/, '');
-  const cleanPath = String(apiPath || '/models').startsWith('/') ? String(apiPath || '/models') : `/${apiPath}`;
+  const cleanPath = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
   return `${cleanBase}${cleanPath}`;
 }
 

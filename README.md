@@ -45,7 +45,7 @@ Application: %LOCALAPPDATA%\byok-cli-hub\app\
 User data:  %USERPROFILE%\.byok-cli-hub\
 ```
 
-The installer stages and smoke-tests a complete application snapshot before switching it into place. An existing `providers.json` is preserved. The application directory is added to the user `PATH` unless `BYOK_CLI_HUB_SKIP_PATH_UPDATE=1` or `-SkipPathUpdate` is supplied.
+The installer stages and smoke-tests a complete application snapshot before switching it into place. An existing `providers.json` is preserved. If installation fails, the previous application, extension, user `PATH`, and any data files created or replaced by that attempt are restored. The application directory is added to the user `PATH` unless `BYOK_CLI_HUB_SKIP_PATH_UPDATE=1` or `-SkipPathUpdate` is supplied.
 
 The Copilot extension is opt-in:
 
@@ -87,7 +87,7 @@ bash bin/linux/install.sh \
   --bin-dir "$HOME/.local/bin"
 ```
 
-The resolved data directory is recorded in the managed install manifest and exported by the generated shim as `BYOK_CLI_HUB_DATA_DIR`, so the Manager and extension read the same state/cache.
+The resolved data directory is recorded in the managed install manifest and exported by the generated shim as `BYOK_CLI_HUB_DATA_DIR`, so the Manager and extension read the same state/cache. Application, shim, extension, and installer-created data changes are rolled back together if a later validation or switch step fails.
 
 Use `--check` to validate prerequisites and paths without writing files. Upgrading a recognizable installation made before ownership manifests requires the explicit `--adopt-legacy` option.
 
@@ -98,6 +98,8 @@ This project is distributed as source; `0.0.2` does not introduce an MSI, DEB/RP
 Repo mode means running `bin\win\run.cmd` or `bin/linux/run.sh` directly from a clone. Upgrade by running `git pull` or checking out a newer release tag. Repo mode does not copy an application snapshot or modify `PATH`, so it has no separate uninstall step.
 
 Installed mode means running the installer from downloaded or cloned release source. Upgrade by obtaining the newer source and rerunning that version's installer. The installer replaces only its managed application snapshot, shim/`PATH` entry, manifest, and optional managed extension; user config, state, and cache remain in the data directory. Use the installed uninstaller for removal.
+
+A managed update must keep the data, shim, and extension paths recorded by the existing manifest. Windows rejects a different `BYOK_CLI_HUB_DATA_DIR` or `COPILOT_HOME`; Linux rejects different `--data-dir` or `--bin-dir` values. To relocate these paths without leaving orphaned managed files, uninstall first and then reinstall with the new locations.
 
 For a Windows `0.0.1` upgrade, run the `0.0.2` Windows installer normally. It validates the legacy config before creating `%USERPROFILE%\.byok-cli-hub\providers.json`, moves the application to `%LOCALAPPDATA%\byok-cli-hub\app`, migrates the user `PATH`, preserves state/cache and the original legacy config, and adopts a recognizable legacy extension. Unknown extension content is preserved without taking ownership. If validation or any switch step fails, the old launcher, extension, files, and original `PATH` are restored.
 
@@ -160,7 +162,7 @@ set "MY_PROVIDER_API_KEY=your-api-key"
 export MY_PROVIDER_API_KEY='your-api-key'
 ```
 
-Invalid JSON, IDs, environment variable names, executable fragments, argument types, headers, or base URL schemes are rejected with a JSON path. `{api_key}` is forbidden in CLI arguments and may only be used in child environment templates. A damaged user config is not silently replaced.
+Invalid JSON, IDs, environment variable names, executable fragments, argument types, headers/prefixes, or base URL schemes are rejected with a JSON path. `modelsApi.path` must not contain control characters, a query (`?`), or a fragment (`#`). Node and PowerShell apply the same acceptance contract for these fields. `{api_key}` is forbidden in CLI arguments and may only be used in child environment templates. A damaged user config is not silently replaced.
 
 ## Launching
 
@@ -236,10 +238,23 @@ Neither uninstaller removes GitHub Copilot CLI or any other separately installed
 ## Development and verification
 
 ```text
+# Run every test supported by the current OS:
 npm test
+
+# Cross-platform Node tests only:
+npm run test:node
+
+# Granular Windows suites:
 npm run smoke
-npm run test:windows-installer
 npm run test:powershell-http
+npm run test:windows-installer
+npm run test:all:windows
+
+# Linux installer or aggregate suite:
+npm run test:linux-installer
+npm run test:all:linux
 ```
 
-The tests cover config validation, damaged-file preservation, endpoint-scoped cache freshness, HTTP limits, strict arguments, redaction, side-effect-free dry-run, cross-runtime cache locking/stale-lock recovery, Windows `0.0.1` migration and rollback, and Linux install/update/uninstall transactions. The PowerShell smoke test exercises the canonical Windows data contract.
+`npm test` is platform-aware: Windows runs Node, PowerShell smoke/HTTP, and Windows installer suites; Linux runs Node and Linux installer suites. The Windows and Ubuntu jobs in `.github/workflows/test.yml` run this same entry point in CI.
+
+The tests cover the shared Node/PowerShell config contract, damaged-file preservation, endpoint-scoped cache freshness, bounded HTTP reads and stalled-body deadlines, empty model arrays, strict arguments, redaction, side-effect-free dry-run, active and abandoned cross-runtime locks, Windows `0.0.1` migration and rollback, managed-path relocation guards, and Windows/Linux data-aware installation transactions.

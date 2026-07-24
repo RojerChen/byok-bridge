@@ -9,6 +9,7 @@ const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const COMMAND_PATTERN = /^[A-Za-z0-9._+-]+$/;
 const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+const MODELS_API_PATH_FORBIDDEN_PATTERN = /[\u0000-\u001f\u007f?#]/;
 
 export class ConfigValidationError extends Error {
   constructor(jsonPath, message) {
@@ -113,15 +114,22 @@ function validateProvider(provider, jsonPath) {
       && (typeof provider.apiKeyHeader !== 'string' || !HEADER_NAME_PATTERN.test(provider.apiKeyHeader))) {
     fail(`${jsonPath}.apiKeyHeader`, 'is not a valid HTTP header name.');
   }
+  if (provider.apiKeyPrefix !== undefined && typeof provider.apiKeyPrefix !== 'string') {
+    fail(`${jsonPath}.apiKeyPrefix`, 'must be a string.');
+  }
   if (provider.modelsApi !== undefined) {
     if (!isRecord(provider.modelsApi)) fail(`${jsonPath}.modelsApi`, 'must be an object.');
-    for (const property of ['path', 'itemsPath', 'idPath']) {
+    for (const property of ['path', 'itemsPath', 'idPath', 'apiKeyPrefix']) {
       if (provider.modelsApi[property] !== undefined && typeof provider.modelsApi[property] !== 'string') {
         fail(`${jsonPath}.modelsApi.${property}`, 'must be a string.');
       }
     }
+    if (MODELS_API_PATH_FORBIDDEN_PATTERN.test(provider.modelsApi.path || '')) {
+      fail(`${jsonPath}.modelsApi.path`, 'must not contain control characters, a query, or a fragment.');
+    }
     if (provider.modelsApi.apiKeyHeader !== undefined
-        && !HEADER_NAME_PATTERN.test(provider.modelsApi.apiKeyHeader)) {
+        && (typeof provider.modelsApi.apiKeyHeader !== 'string'
+          || !HEADER_NAME_PATTERN.test(provider.modelsApi.apiKeyHeader))) {
       fail(`${jsonPath}.modelsApi.apiKeyHeader`, 'is not a valid HTTP header name.');
     }
   }

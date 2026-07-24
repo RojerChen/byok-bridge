@@ -1,10 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { withFileLock } from '../../extension/lib/file-lock.mjs';
 
-const LOCK_TIMEOUT_MS = 3000;
-const STALE_LOCK_MS = 30000;
-const sleepCell = new Int32Array(new SharedArrayBuffer(4));
 
 /**
  * Gets the BYOK CLI Hub data directory root.
@@ -96,66 +94,6 @@ function writeJsonUnlocked(filePath, data) {
     }
     try { fs.unlinkSync(tmpPath); } catch {}
     throw error;
-  }
-}
-
-function sleep(milliseconds) {
-  Atomics.wait(sleepCell, 0, 0, milliseconds);
-}
-
-function lockOwnerIsAlive(lockPath) {
-  try {
-    const ownerPid = Number.parseInt(fs.readFileSync(lockPath, 'utf8').trim().split(/\s+/)[0], 10);
-    if (!Number.isInteger(ownerPid) || ownerPid <= 0) return false;
-    process.kill(ownerPid, 0);
-    return true;
-  } catch (error) {
-    return error?.code === 'EPERM';
-  }
-}
-
-function withFileLock(filePath, operation, timeoutMs = LOCK_TIMEOUT_MS) {
-  const lockPath = `${filePath}.lock`;
-  const deadline = Date.now() + timeoutMs;
-  ensurePrivateDirectory(path.dirname(filePath));
-
-  while (true) {
-    let lockFd;
-    try {
-      lockFd = fs.openSync(lockPath, 'wx', 0o600);
-      fs.writeFileSync(lockFd, `${process.pid} ${new Date().toISOString()}\n`, 'utf8');
-      fs.fsyncSync(lockFd);
-      fs.closeSync(lockFd);
-      lockFd = undefined;
-      break;
-    } catch (error) {
-      if (lockFd !== undefined) {
-        try { fs.closeSync(lockFd); } catch {}
-      }
-      if (error.code !== 'EEXIST') throw error;
-
-      try {
-        const age = Date.now() - fs.statSync(lockPath).mtimeMs;
-        if (age > STALE_LOCK_MS && !lockOwnerIsAlive(lockPath)) {
-          fs.unlinkSync(lockPath);
-          continue;
-        }
-      } catch (statError) {
-        if (statError.code === 'ENOENT') continue;
-        throw statError;
-      }
-
-      if (Date.now() >= deadline) {
-        throw new Error(`Timed out waiting for data lock '${lockPath}'.`);
-      }
-      sleep(25);
-    }
-  }
-
-  try {
-    return operation();
-  } finally {
-    try { fs.unlinkSync(lockPath); } catch {}
   }
 }
 

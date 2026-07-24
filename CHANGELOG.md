@@ -13,6 +13,7 @@ The format is intentionally simple and follows a lightweight `Keep a Changelog` 
 - Windows uninstaller with data preservation by default.
 - Isolated Windows `0.0.1` migration, rollback, unknown-owner, and malformed-config fixtures.
 - PowerShell HTTP security tests and Node/PowerShell concurrent cache/stale-lock recovery tests.
+- Platform-aware `npm test` orchestration, shared Node/PowerShell config contract fixtures, and Windows/Ubuntu CI jobs.
 
 ### Changed
 
@@ -22,6 +23,14 @@ The format is intentionally simple and follows a lightweight `Keep a Changelog` 
 - Copilot extension installation is opt-in for fresh installs. Existing managed choices are preserved during update.
 - Config, state, and cache now use the canonical `<data-dir>` root and compatible locked atomic storage across Node, PowerShell, and the extension.
 - Dry-run is read-only: it cannot add providers, migrate config, fetch models, update state/cache, or launch a child process.
+
+### Fixed
+
+- Node and PowerShell now distinguish live, dead, and unreadable stale locks, honor lock deadlines under Windows exclusive sharing, and consistently clean up lock descriptors.
+- PowerShell model discovery now applies one deadline to headers and the complete response body, uses structured domain-error tagging, and accepts valid empty root or nested model arrays.
+- Windows and Linux installation rollback now restores installer-created or replaced data files. Windows also restores partially moved `0.0.1` files if migration fails in the middle of the move loop.
+- Managed updates reject silent data/shim/extension path relocation that could leave orphaned managed files; relocation requires uninstalling and reinstalling.
+- Node and PowerShell config validation now agree on command paths, header/prefix types, and `modelsApi.path` restrictions.
 
 ### Windows 0.0.1 upgrade
 

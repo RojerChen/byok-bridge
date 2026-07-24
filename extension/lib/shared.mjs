@@ -1,8 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
-const sleepCell = new Int32Array(new SharedArrayBuffer(4));
+import { withFileLock } from "./file-lock.mjs";
 
 export function getDataDir() {
   let override = process.env.BYOK_CLI_HUB_DATA_DIR?.trim() || process.env.BYOK_MODEL_V3_DATA_DIR?.trim();
@@ -53,50 +52,6 @@ function writeJsonUnlocked(filePath, value) {
     if (descriptor !== undefined) try { fs.closeSync(descriptor); } catch {}
     try { fs.unlinkSync(tmp); } catch {}
     throw error;
-  }
-}
-
-function lockOwnerIsAlive(lockPath) {
-  try {
-    const ownerPid = Number.parseInt(fs.readFileSync(lockPath, "utf8").trim().split(/\s+/)[0], 10);
-    if (!Number.isInteger(ownerPid) || ownerPid <= 0) return false;
-    process.kill(ownerPid, 0);
-    return true;
-  } catch (error) {
-    return error?.code === "EPERM";
-  }
-}
-
-function withFileLock(filePath, operation) {
-  const lockPath = `${filePath}.lock`;
-  const deadline = Date.now() + 3000;
-  fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
-  while (true) {
-    try {
-      const descriptor = fs.openSync(lockPath, "wx", 0o600);
-      fs.writeFileSync(descriptor, `${process.pid} ${new Date().toISOString()}\n`, "utf8");
-      fs.fsyncSync(descriptor);
-      fs.closeSync(descriptor);
-      break;
-    } catch (error) {
-      if (error.code !== "EEXIST") throw error;
-      try {
-        if (Date.now() - fs.statSync(lockPath).mtimeMs > 30000 && !lockOwnerIsAlive(lockPath)) {
-          fs.unlinkSync(lockPath);
-          continue;
-        }
-      } catch (statError) {
-        if (statError.code === "ENOENT") continue;
-        throw statError;
-      }
-      if (Date.now() >= deadline) throw new Error(`Timed out waiting for data lock '${lockPath}'.`);
-      Atomics.wait(sleepCell, 0, 0, 25);
-    }
-  }
-  try {
-    return operation();
-  } finally {
-    try { fs.unlinkSync(lockPath); } catch {}
   }
 }
 

@@ -19,6 +19,11 @@ SWITCHED_INSTALL=0
 SWITCHED_SHIM=0
 SWITCHED_EXTENSION=0
 APP_VERSION=""
+DATA_DIR_CREATED=0
+DATA_MARKER_CREATED=0
+DATA_CONFIG_CREATED=0
+DATA_EXAMPLE_CREATED=0
+DATA_EXAMPLE_BACKUP=""
 
 die() {
   echo "Error: $*" >&2
@@ -82,7 +87,7 @@ NODE_MAJOR="$(node -e "process.stdout.write(process.versions.node.split('.')[0])
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd -P)"
-APP_VERSION="$(node -e 'const p=require(process.argv[1]); if(typeof p.version!=="string"||!p.version) process.exit(1); process.stdout.write(p.version)' "$REPO_ROOT/package.json")" \
+APP_VERSION="$(node -e 'const p=require(process.argv[1]); if(typeof p.version!=="string"||!/^\d+\.\d+\.\d+$/.test(p.version)) process.exit(1); process.stdout.write(p.version)' "$REPO_ROOT/package.json")" \
   || die "Source package version is missing."
 command -v realpath >/dev/null 2>&1 || die "The 'realpath' command is required."
 HOME_CANON="$(realpath -m -- "$HOME")"
@@ -201,8 +206,12 @@ if [[ -f "$MANIFEST_PATH" ]]; then
   assert_not_overlapping 'manifest install-dir' "$TARGET_INSTALL_DIR" 'manifest extension-dir' "$MANIFEST_EXT_DIR"
   assert_not_overlapping 'manifest data-dir' "$MANIFEST_DATA_DIR" 'manifest extension-dir' "$MANIFEST_EXT_DIR"
   assert_not_overlapping 'manifest bin-dir' "$MANIFEST_BIN_DIR" 'manifest extension-dir' "$MANIFEST_EXT_DIR"
-  [[ -n "$DATA_DIR" ]] || TARGET_DATA_DIR="$MANIFEST_DATA_DIR"
-  [[ -n "$BIN_DIR" ]] || TARGET_BIN_DIR="$MANIFEST_BIN_DIR"
+  [[ -z "$DATA_DIR" || "$TARGET_DATA_DIR" == "$MANIFEST_DATA_DIR" ]] \
+    || die "A managed update cannot relocate data-dir. Uninstall and reinstall to choose a new path."
+  [[ -z "$BIN_DIR" || "$TARGET_BIN_DIR" == "$MANIFEST_BIN_DIR" ]] \
+    || die "A managed update cannot relocate bin-dir. Uninstall and reinstall to choose a new path."
+  TARGET_DATA_DIR="$MANIFEST_DATA_DIR"
+  TARGET_BIN_DIR="$MANIFEST_BIN_DIR"
   TARGET_EXT_DIR="$MANIFEST_EXT_DIR"
   [[ "${PREVIOUS_FIELDS[4]}" != "true" ]] || WITH_EXTENSION=1
   SHIM_PATH="$TARGET_BIN_DIR/byok-cli-hub"
@@ -234,22 +243,83 @@ elif [[ "$WITH_EXTENSION" -eq 0 && -e "$TARGET_EXT_DIR" && ! -f "$TARGET_EXT_DIR
   echo "[WARNING] Preserving unowned extension: $TARGET_EXT_DIR" >&2
 fi
 
+rollback() {
+  local status=$?
+  trap - EXIT INT TERM
+  set +e
+  if [[ "$status" -ne 0 ]]; then
+    echo "[ERROR] Installation failed; restoring the previous installation." >&2
+    if [[ -n "$EXT_BACKUP_DIR" && -d "$EXT_BACKUP_DIR" ]]; then
+      rm -rf -- "$TARGET_EXT_DIR"
+      mv -- "$EXT_BACKUP_DIR" "$TARGET_EXT_DIR"
+    elif [[ "$SWITCHED_EXTENSION" -eq 1 ]]; then
+      rm -rf -- "$TARGET_EXT_DIR"
+    fi
+    if [[ -n "$SHIM_BACKUP" && -f "$SHIM_BACKUP" ]]; then
+      rm -f -- "$SHIM_PATH"
+      mv -- "$SHIM_BACKUP" "$SHIM_PATH"
+    elif [[ "$SWITCHED_SHIM" -eq 1 ]]; then
+      rm -f -- "$SHIM_PATH"
+    fi
+    if [[ -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]]; then
+      rm -rf -- "$TARGET_INSTALL_DIR"
+      mv -- "$BACKUP_DIR" "$TARGET_INSTALL_DIR"
+    elif [[ "$SWITCHED_INSTALL" -eq 1 ]]; then
+      rm -rf -- "$TARGET_INSTALL_DIR"
+    fi
+
+    if [[ -n "$DATA_EXAMPLE_BACKUP" && -f "$DATA_EXAMPLE_BACKUP" ]]; then
+      mv -f -- "$DATA_EXAMPLE_BACKUP" "$TARGET_DATA_DIR/providers.example.json"
+      DATA_EXAMPLE_BACKUP=""
+    elif [[ "$DATA_EXAMPLE_CREATED" -eq 1 ]]; then
+      rm -f -- "$TARGET_DATA_DIR/providers.example.json"
+    fi
+    [[ "$DATA_CONFIG_CREATED" -ne 1 ]] || rm -f -- "$TARGET_DATA_DIR/providers.json"
+    [[ "$DATA_MARKER_CREATED" -ne 1 ]] || rm -f -- "$TARGET_DATA_DIR/.byok-cli-hub-data"
+    if [[ "$DATA_DIR_CREATED" -eq 1 && -d "$TARGET_DATA_DIR" ]]; then
+      rmdir -- "$TARGET_DATA_DIR" 2>/dev/null || true
+    fi
+  fi
+  [[ -n "$STAGING_DIR" && -d "$STAGING_DIR" ]] && rm -rf -- "$STAGING_DIR"
+  [[ -n "$SHIM_TEMP" && -f "$SHIM_TEMP" ]] && rm -f -- "$SHIM_TEMP"
+  [[ -n "$EXT_STAGING_DIR" && -d "$EXT_STAGING_DIR" ]] && rm -rf -- "$EXT_STAGING_DIR"
+  [[ -n "$DATA_EXAMPLE_BACKUP" && -f "$DATA_EXAMPLE_BACKUP" ]] && rm -f -- "$DATA_EXAMPLE_BACKUP"
+  exit "$status"
+}
+trap rollback EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 umask 077
+[[ -d "$TARGET_DATA_DIR" ]] || DATA_DIR_CREATED=1
 mkdir -p "$TARGET_DATA_DIR"
-chmod 700 "$TARGET_DATA_DIR"
-: > "$TARGET_DATA_DIR/.byok-cli-hub-data"
-chmod 600 "$TARGET_DATA_DIR/.byok-cli-hub-data"
+[[ "$DATA_DIR_CREATED" -ne 1 ]] || chmod 700 "$TARGET_DATA_DIR"
+if [[ ! -e "$TARGET_DATA_DIR/.byok-cli-hub-data" ]]; then
+  : > "$TARGET_DATA_DIR/.byok-cli-hub-data"
+  chmod 600 "$TARGET_DATA_DIR/.byok-cli-hub-data"
+  DATA_MARKER_CREATED=1
+fi
 if [[ ! -f "$TARGET_DATA_DIR/providers.json" ]]; then
   CONFIG_SOURCE="$REPO_ROOT/config/providers.example.json"
   [[ -f "$CONFIG_SOURCE" ]] || CONFIG_SOURCE="$REPO_ROOT/config/providers.json"
   [[ -f "$CONFIG_SOURCE" ]] || die "Bundled provider configuration is missing."
   cp "$CONFIG_SOURCE" "$TARGET_DATA_DIR/providers.json"
   chmod 600 "$TARGET_DATA_DIR/providers.json"
+  DATA_CONFIG_CREATED=1
   echo "[OK] Initialized $TARGET_DATA_DIR/providers.json"
 else
   echo "[INFO] Preserved $TARGET_DATA_DIR/providers.json"
 fi
 if [[ -f "$REPO_ROOT/config/providers.example.json" ]]; then
+  if [[ -e "$TARGET_DATA_DIR/providers.example.json" && ! -f "$TARGET_DATA_DIR/providers.example.json" ]]; then
+    die "Provider example path is not a regular file: $TARGET_DATA_DIR/providers.example.json"
+  fi
+  if [[ -f "$TARGET_DATA_DIR/providers.example.json" ]]; then
+    DATA_EXAMPLE_BACKUP="$(mktemp "$TARGET_DATA_DIR/.providers.example.backup.XXXXXX")"
+    cp -p -- "$TARGET_DATA_DIR/providers.example.json" "$DATA_EXAMPLE_BACKUP"
+  else
+    DATA_EXAMPLE_CREATED=1
+  fi
   cp "$REPO_ROOT/config/providers.example.json" "$TARGET_DATA_DIR/providers.example.json"
   chmod 600 "$TARGET_DATA_DIR/providers.example.json"
 fi
@@ -260,39 +330,6 @@ STAGING_DIR="$(mktemp -d "$PARENT_INSTALL_DIR/.byok-cli-hub.staging.XXXXXX")"
 BACKUP_DIR="${TARGET_INSTALL_DIR}.backup.$$"
 SHIM_TEMP="$(mktemp "$TARGET_BIN_DIR/.byok-cli-hub.shim.XXXXXX")"
 SHIM_BACKUP="${SHIM_PATH}.backup.$$"
-
-rollback() {
-  local status=$?
-  trap - EXIT INT TERM
-  if [[ "$status" -ne 0 ]]; then
-    echo "[ERROR] Installation failed; restoring the previous installation." >&2
-    if [[ -n "$EXT_BACKUP_DIR" && -d "$EXT_BACKUP_DIR" ]]; then
-      rm -rf -- "$TARGET_EXT_DIR"
-      mv -- "$EXT_BACKUP_DIR" "$TARGET_EXT_DIR"
-    elif [[ "$SWITCHED_EXTENSION" -eq 1 ]]; then
-      rm -rf -- "$TARGET_EXT_DIR"
-    fi
-    if [[ -f "$SHIM_BACKUP" ]]; then
-      rm -f -- "$SHIM_PATH"
-      mv -- "$SHIM_BACKUP" "$SHIM_PATH"
-    elif [[ "$SWITCHED_SHIM" -eq 1 ]]; then
-      rm -f -- "$SHIM_PATH"
-    fi
-    if [[ -d "$BACKUP_DIR" ]]; then
-      rm -rf -- "$TARGET_INSTALL_DIR"
-      mv -- "$BACKUP_DIR" "$TARGET_INSTALL_DIR"
-    elif [[ "$SWITCHED_INSTALL" -eq 1 ]]; then
-      rm -rf -- "$TARGET_INSTALL_DIR"
-    fi
-  fi
-  [[ -n "$STAGING_DIR" && -d "$STAGING_DIR" ]] && rm -rf -- "$STAGING_DIR"
-  [[ -n "$SHIM_TEMP" && -f "$SHIM_TEMP" ]] && rm -f -- "$SHIM_TEMP"
-  [[ -n "$EXT_STAGING_DIR" && -d "$EXT_STAGING_DIR" ]] && rm -rf -- "$EXT_STAGING_DIR"
-  exit "$status"
-}
-trap rollback EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
 
 cp -R "$REPO_ROOT/manager" "$STAGING_DIR/"
 cp -R "$REPO_ROOT/config" "$STAGING_DIR/"
@@ -381,9 +418,15 @@ failure_point 'before-backup-cleanup'
 [[ ! -d "$BACKUP_DIR" ]] || rm -rf -- "$BACKUP_DIR" || echo "[WARNING] Could not remove backup: $BACKUP_DIR" >&2
 [[ ! -f "$SHIM_BACKUP" ]] || rm -f -- "$SHIM_BACKUP" || echo "[WARNING] Could not remove shim backup: $SHIM_BACKUP" >&2
 [[ -z "$EXT_BACKUP_DIR" || ! -d "$EXT_BACKUP_DIR" ]] || rm -rf -- "$EXT_BACKUP_DIR" || echo "[WARNING] Could not remove extension backup: $EXT_BACKUP_DIR" >&2
+[[ -z "$DATA_EXAMPLE_BACKUP" || ! -f "$DATA_EXAMPLE_BACKUP" ]] || rm -f -- "$DATA_EXAMPLE_BACKUP" || echo "[WARNING] Could not remove data backup: $DATA_EXAMPLE_BACKUP" >&2
 SWITCHED_INSTALL=0
 SWITCHED_SHIM=0
 SWITCHED_EXTENSION=0
+DATA_DIR_CREATED=0
+DATA_MARKER_CREATED=0
+DATA_CONFIG_CREATED=0
+DATA_EXAMPLE_CREATED=0
+DATA_EXAMPLE_BACKUP=""
 trap - EXIT INT TERM
 
 echo "[OK] Installed application snapshot to $TARGET_INSTALL_DIR"

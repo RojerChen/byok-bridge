@@ -41,6 +41,21 @@ APP_DIR="$TEST_ROOT/app"
 DATA_DIR="$TEST_ROOT/data"
 BIN_DIR="$TEST_ROOT/bin"
 
+# A failed fresh install must not leave newly initialized data behind.
+FRESH_APP_DIR="$TEST_ROOT/fresh-failure/app"
+FRESH_DATA_DIR="$TEST_ROOT/fresh-failure/data"
+FRESH_BIN_DIR="$TEST_ROOT/fresh-failure/bin"
+if BYOK_CLI_HUB_TEST_FAIL_AT=after-app-backup bash "$REPO_ROOT/bin/linux/install.sh" \
+  --install-dir "$FRESH_APP_DIR" \
+  --data-dir "$FRESH_DATA_DIR" \
+  --bin-dir "$FRESH_BIN_DIR" >/dev/null 2>&1; then
+  echo 'Injected fresh-install failure unexpectedly succeeded.' >&2
+  exit 1
+fi
+[[ ! -e "$FRESH_APP_DIR" ]]
+[[ ! -e "$FRESH_DATA_DIR" ]]
+[[ ! -e "$FRESH_BIN_DIR/byok-cli-hub" ]]
+
 bash "$REPO_ROOT/bin/linux/install.sh" \
   --install-dir "$APP_DIR" \
   --data-dir "$DATA_DIR" \
@@ -66,6 +81,17 @@ if bash "$REPO_ROOT/bin/linux/install.sh" \
 fi
 cp "$TEST_ROOT/manifest-backup.json" "$APP_DIR/.byok-cli-hub-install.json"
 
+# Managed updates must not silently relocate the shim and orphan the old one.
+if bash "$REPO_ROOT/bin/linux/install.sh" \
+  --install-dir "$APP_DIR" \
+  --data-dir "$DATA_DIR" \
+  --bin-dir "$TEST_ROOT/relocated-bin" >/dev/null 2>&1; then
+  echo 'Managed update unexpectedly relocated bin-dir.' >&2
+  exit 1
+fi
+[[ -f "$BIN_DIR/byok-cli-hub" ]]
+[[ ! -e "$TEST_ROOT/relocated-bin/byok-cli-hub" ]]
+
 # Update must preserve config and replace the snapshot transactionally.
 CONFIG_HASH="$(node -e 'const fs=require("node:fs"),c=require("node:crypto");process.stdout.write(c.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' "$DATA_DIR/providers.json")"
 bash "$REPO_ROOT/bin/linux/install.sh" \
@@ -80,6 +106,7 @@ for failure_point in after-app-backup after-shim-backup after-extension-backup b
   printf '%s\n' "$failure_point" > "$APP_DIR/rollback-sentinel.txt"
   printf '# rollback=%s\n' "$failure_point" >> "$BIN_DIR/byok-cli-hub"
   printf '%s\n' "$failure_point" > "$EXT_DIR/rollback-sentinel.txt"
+  printf 'example=%s\n' "$failure_point" > "$DATA_DIR/providers.example.json"
   if BYOK_CLI_HUB_TEST_FAIL_AT="$failure_point" bash "$REPO_ROOT/bin/linux/install.sh" \
     --install-dir "$APP_DIR" \
     --data-dir "$DATA_DIR" \
@@ -90,6 +117,7 @@ for failure_point in after-app-backup after-shim-backup after-extension-backup b
   [[ "$(cat "$APP_DIR/rollback-sentinel.txt")" == "$failure_point" ]]
   grep -q "^# rollback=$failure_point$" "$BIN_DIR/byok-cli-hub"
   [[ "$(cat "$EXT_DIR/rollback-sentinel.txt")" == "$failure_point" ]]
+  [[ "$(cat "$DATA_DIR/providers.example.json")" == "example=$failure_point" ]]
 done
 
 bash "$REPO_ROOT/bin/linux/uninstall.sh" --install-dir "$APP_DIR"

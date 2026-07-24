@@ -5,9 +5,13 @@
   "type": "module",
   "description": "Configuration-driven BYOK launcher and hub for multiple AI CLIs",
   "scripts": {
-    "test": "node --test manager/*.test.mjs tests/*.test.mjs",
+    "test": "node tests/run-all-tests.mjs",
+    "test:node": "node --test manager/*.test.mjs tests/*.test.mjs",
     "smoke": "powershell -NoProfile -ExecutionPolicy Bypass -File manager/smoke-test.ps1",
     "test:windows-installer": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/windows-installer.test.ps1",
-    "test:powershell-http": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/powershell-http.test.ps1"
+    "test:powershell-http": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/powershell-http.test.ps1",
+    "test:linux-installer": "bash tests/linux-installer.test.sh",
+    "test:all:windows": "npm run test:node && npm run smoke && npm run test:powershell-http && npm run test:windows-installer",
+    "test:all:linux": "npm run test:node && npm run test:linux-installer"
   }
 }

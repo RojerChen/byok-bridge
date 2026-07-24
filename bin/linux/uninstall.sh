@@ -65,6 +65,11 @@ canonicalize_absolute() {
 }
 
 is_same_or_parent() { [[ "$2" == "$1" || "$2" == "$1/"* ]]; }
+assert_not_overlapping() {
+  if is_same_or_parent "$2" "$4" || is_same_or_parent "$4" "$2"; then
+    die "$1 and $3 must not overlap: '$2' / '$4'"
+  fi
+}
 assert_safe_target() {
   local label="$1" target="$2"
   case "$target" in
@@ -93,12 +98,16 @@ manifest_value() {
 
 if [[ -f "$MANIFEST_PATH" ]]; then
   [[ "$(manifest_value product)" == "byok-cli-hub" ]] || die "Install manifest product marker is invalid."
+  [[ "$(manifest_value schemaVersion)" == "1" ]] || die "Install manifest schema version is invalid."
+  APP_VERSION_VALUE="$(manifest_value appVersion)"
+  [[ "$APP_VERSION_VALUE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "Install manifest application version is invalid."
   MANIFEST_INSTALL_DIR="$(canonicalize_absolute 'manifest installDir' "$(manifest_value installDir)")"
   [[ "$MANIFEST_INSTALL_DIR" == "$TARGET_INSTALL_DIR" ]] || die "Manifest installDir does not match the requested target."
   TARGET_DATA_DIR="$(canonicalize_absolute 'data-dir' "${DATA_DIR:-$(manifest_value dataDir)}")"
   TARGET_BIN_DIR="$(canonicalize_absolute 'bin-dir' "${BIN_DIR:-$(manifest_value binDir)}")"
   TARGET_EXT_DIR="$(canonicalize_absolute 'extension-dir' "$(manifest_value extensionDir)")"
   WITH_EXTENSION="$(manifest_value withExtension)"
+  [[ "$WITH_EXTENSION" == "0" || "$WITH_EXTENSION" == "1" ]] || die "Install manifest extension ownership value is invalid."
 else
   [[ "$FORCE_LEGACY" -eq 1 && -f "$TARGET_INSTALL_DIR/manager/manager.mjs" ]] \
     || die "No valid ownership manifest found. Refusing to remove '$TARGET_INSTALL_DIR'."
@@ -112,6 +121,12 @@ fi
 assert_safe_target 'data-dir' "$TARGET_DATA_DIR"
 assert_safe_target 'bin-dir' "$TARGET_BIN_DIR"
 assert_safe_target 'extension-dir' "$TARGET_EXT_DIR"
+assert_not_overlapping 'install-dir' "$TARGET_INSTALL_DIR" 'data-dir' "$TARGET_DATA_DIR"
+assert_not_overlapping 'install-dir' "$TARGET_INSTALL_DIR" 'bin-dir' "$TARGET_BIN_DIR"
+assert_not_overlapping 'data-dir' "$TARGET_DATA_DIR" 'bin-dir' "$TARGET_BIN_DIR"
+assert_not_overlapping 'install-dir' "$TARGET_INSTALL_DIR" 'extension-dir' "$TARGET_EXT_DIR"
+assert_not_overlapping 'data-dir' "$TARGET_DATA_DIR" 'extension-dir' "$TARGET_EXT_DIR"
+assert_not_overlapping 'bin-dir' "$TARGET_BIN_DIR" 'extension-dir' "$TARGET_EXT_DIR"
 SHIM_PATH="$TARGET_BIN_DIR/byok-cli-hub"
 
 echo "=== BYOK CLI Hub Uninstaller ==="

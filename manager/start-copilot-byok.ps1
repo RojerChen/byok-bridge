@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-    start-byok-cli-hub.ps1 — BYOK CLI Hub manager (PowerShell).
+    start-copilot-byok.ps1 — BYOK CLI Hub manager implementation (PowerShell).
     1. select a CLI to launch (copilot, gemini, aider, …) from clis config
     2. list providers / pick one (or -Provider <id>)
     3. resolve baseUrl / apiKey (flags, env, or interactive prompt)
@@ -91,8 +91,8 @@ function Invoke-AddProviderFlow {
 try {
     # Start every interactive run with a clean console.
     try { Clear-Host } catch { }
-    $dataDir = Get-ByokDataDir
-    $cfg = Load-ByokProviderConfig $dataDir
+    $dataDir = Get-ByokDataDir -NoCreate:$DryRun
+    $cfg = Load-ByokProviderConfig $dataDir -ReadOnly:$DryRun
     $providers = @($cfg.providers)
     $clis = @($cfg.clis)
     $state = Read-ByokState $dataDir
@@ -101,6 +101,7 @@ try {
     $rememberedModel = if ($state -and $state.model) { "$($state.model)".Trim() } else { $null }
     $cliArg = if ($PSBoundParameters.ContainsKey('Cli')) { Get-OptionalValue $Cli } else { $null }
     $providerArg = if ($PSBoundParameters.ContainsKey('Provider')) { Get-OptionalValue $Provider } else { $null }
+    if ($DryRun -and $providerArg -eq '+') { throw "-DryRun cannot be combined with -Provider '+', because adding a provider is a persistent change." }
     Write-Inf "Using provider config: $($cfg.configPath)"
     if ($providers.Count -eq 0) { Write-Err 'No enabled providers were found.'; exit 1 }
 
@@ -161,13 +162,14 @@ try {
 
     # --- Provider selection --------------------------------------------------
     $rememberedProviderIndex = Get-SelectionIndex $providers $rememberedProviderId
-    $addIdx = $providers.Count + 1
+    $allowAddProvider = -not $DryRun
+    $addIdx = if ($allowAddProvider) { $providers.Count + 1 } else { $providers.Count }
     Write-Host 'Available providers:'
     for ($i = 0; $i -lt $providers.Count; $i++) {
         $isDefault = $null -ne $rememberedProviderIndex -and $i -eq $rememberedProviderIndex
         Write-DefaultMenuItem ('{0} ({1})' -f $providers[$i].name, $providers[$i].id) ($i + 1) $isDefault
     }
-    Write-Host ('{0}. Add a new provider...' -f $addIdx) -ForegroundColor Cyan
+    if ($allowAddProvider) { Write-Host ('{0}. Add a new provider...' -f $addIdx) -ForegroundColor Cyan }
 
     $selected = $null
     if ($providerArg) {
@@ -188,8 +190,8 @@ try {
         } else {
             ([int]$line - 1)
         }
-        if ($idx -lt 0 -or $idx -gt $providers.Count) { Write-Err 'Invalid provider selection.'; exit 1 }
-        if ($idx -eq $providers.Count) {
+        if ($idx -lt 0 -or $idx -ge $addIdx) { Write-Err 'Invalid provider selection.'; exit 1 }
+        if ($allowAddProvider -and $idx -eq $providers.Count) {
             $selected = Invoke-AddProviderFlow -Cli $selectedCli
         } else {
             $selected = $providers[$idx]
@@ -213,20 +215,30 @@ try {
 
     $apiPath = if ($selected.modelsApi -and $selected.modelsApi.path) { $selected.modelsApi.path } else { '/models' }
     $modelCacheTtlSeconds = Get-ByokModelCacheTtlSeconds $selected
-    $cachedModelIds = @()
-    $useCachedModels = $false
-    if ($modelCacheTtlSeconds -gt 0) {
-        $cachedModelIds = @(Get-ByokCachedModelIds $selected.id $dataDir)
-        $useCachedModels = $cachedModelIds.Count -gt 0 -and (Test-ByokModelCacheFresh $selected.id $selected $dataDir $base $apiPath)
+    $cachedModelIds = @(Get-ByokCachedModelIds $selected.id $dataDir)
+    $cacheEntry = Get-ByokProviderCacheEntry $selected.id $dataDir
+    $cacheEntryApiPath = if ($cacheEntry.apiPath) { $cacheEntry.apiPath } else { $cacheEntry.modelsApiPath }
+    $cacheIdentityMatches = $cacheEntry -and "$($cacheEntry.baseUrl)".TrimEnd('/') -eq "$base".TrimEnd('/') -and "$cacheEntryApiPath" -eq "$apiPath"
+    $useCachedModels = $modelCacheTtlSeconds -gt 0 -and $cachedModelIds.Count -gt 0 -and
+        (Test-ByokModelCacheFresh $selected.id $selected $dataDir $base $apiPath)
+
+    $staticModelIds = @()
+    foreach ($configuredModel in @($selected.models)) {
+        if ($configuredModel -is [string]) { $configuredId = "$configuredModel".Trim() }
+        elseif ($configuredModel -and $configuredModel.available -ne $false) { $configuredId = "$($configuredModel.id)".Trim() }
+        else { $configuredId = '' }
+        if ($configuredId -and $staticModelIds -notcontains $configuredId) { $staticModelIds += $configuredId }
     }
 
     $modelIds = @()
+    $available = @()
     $promptedForApiKey = $false
-    if ($DryRun) {
-        $entry = Get-ByokProviderCacheEntry $selected.id $dataDir
-        $entryApiPath = if ($entry.apiPath) { $entry.apiPath } else { $entry.modelsApiPath }
-        $identityMatches = $entry -and "$($entry.baseUrl)".TrimEnd('/') -eq "$base".TrimEnd('/') -and "$entryApiPath" -eq "$apiPath"
-        $available = if ($identityMatches) { @($cachedModelIds) } else { @() }
+    if ($staticModelIds.Count -gt 0) {
+        $modelIds = @($staticModelIds)
+        $available = @($staticModelIds)
+        Write-Inf "Using $($staticModelIds.Count) statically configured models."
+    } elseif ($DryRun) {
+        $available = if ($cacheIdentityMatches) { @($cachedModelIds) } else { @() }
         $modelIds = @($available)
         Write-Inf 'Dry run: network and cache updates were skipped.'
     } elseif ($useCachedModels) {
@@ -235,6 +247,7 @@ try {
         Write-Inf "Using cached models for $($selected.id) (ttl=$modelCacheTtlSeconds sec)"
     } else {
         Write-Inf "Fetching models from $base..."
+        $fetchError = $null
         try {
             $modelIds = @(Invoke-ByokModelFetch $selected $base $apiKey)
         } catch {
@@ -244,15 +257,24 @@ try {
                 $apiKey = (Read-SecureStringAsPlain 'API key').Trim()
                 $fromPrompt = $true
                 $promptedForApiKey = $true
-                $modelIds = @(Invoke-ByokModelFetch $selected $base $apiKey)
+                try { $modelIds = @(Invoke-ByokModelFetch $selected $base $apiKey) } catch { $fetchError = $_ }
             } else {
-                throw
+                $fetchError = $_
             }
         }
-        if ($modelIds.Count -eq 0) { Write-Err 'No models were returned by the provider.'; exit 1 }
-
-        $available = @(Update-ByokCacheForProvider $selected.id $base $apiPath $modelIds $dataDir)
-        Write-Inf "Saved $($modelIds.Count) models to $(Join-Path $dataDir 'models-cache.json')"
+        if ($fetchError) {
+            if (-not $Refresh -and $cacheIdentityMatches -and $cachedModelIds.Count -gt 0) {
+                $modelIds = @($cachedModelIds)
+                $available = @($cachedModelIds)
+                Write-Host "Warning: model refresh failed; using stale cache for '$($selected.id)': $($fetchError.Exception.Message)" -ForegroundColor Yellow
+            } else {
+                throw $fetchError
+            }
+        } else {
+            if ($modelIds.Count -eq 0) { Write-Err 'No models were returned by the provider.'; exit 1 }
+            $available = @(Update-ByokCacheForProvider $selected.id $base $apiPath $modelIds $dataDir)
+            Write-Inf "Saved $($modelIds.Count) models to $(Join-Path $dataDir 'models-cache.json')"
+        }
     }
 
     $modelFallbackEnv = if ($selectedCli.modelEnvName) { $selectedCli.modelEnvName } else { $null }

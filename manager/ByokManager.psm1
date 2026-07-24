@@ -5,13 +5,17 @@
 # --- data dir -----------------------------------------------------------------
 
 function Get-ByokDataDir {
+    param([switch]$NoCreate)
     $override = if ($env:BYOK_CLI_HUB_DATA_DIR -and $env:BYOK_CLI_HUB_DATA_DIR.Trim()) {
         $env:BYOK_CLI_HUB_DATA_DIR
     } else { $env:BYOK_MODEL_V3_DATA_DIR }
     if ($override -and $override.Trim()) {
         $resolved = $override.Trim()
-        if (-not (Test-Path $resolved)) { New-Item -ItemType Directory -Force -Path $resolved | Out-Null }
-        return (Resolve-Path $resolved).Path
+        if (-not (Test-Path $resolved)) {
+            if (-not $NoCreate) { New-Item -ItemType Directory -Force -Path $resolved | Out-Null }
+            return [IO.Path]::GetFullPath($resolved)
+        }
+        return (Resolve-Path -LiteralPath $resolved).Path
     }
     $newPath = Join-Path $env:USERPROFILE '.byok-cli-hub'
     $legacyPath = Join-Path $env:USERPROFILE '.copilot\byok-model-v3'
@@ -20,12 +24,14 @@ function Get-ByokDataDir {
 }
 
 function Get-ByokConfigPath {
-    param([string]$DataDir)
+    param([string]$DataDir, [switch]$NoMigrate)
     $local = Join-Path $DataDir 'providers.json'
     if (Test-Path -LiteralPath $local) { return $local }
     $legacy = Join-Path $DataDir 'config\providers.json'
     if (Test-Path -LiteralPath $legacy) {
         $legacyValue = Read-ByokJson $legacy $null
+        Assert-ByokProviderConfig $legacyValue | Out-Null
+        if ($NoMigrate) { return $legacy }
         Write-ByokJsonAtomic $local $legacyValue
         return $local
     }
@@ -51,13 +57,11 @@ function Read-ByokJson {
     }
 }
 
-function Write-ByokJsonAtomic {
-    param([string]$Path, $Value)
+function Invoke-WithByokFileLock {
+    param([string]$Path, [scriptblock]$Operation)
     $dir = Split-Path -Parent $Path
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
     $lock = "$Path.lock"
-    $tmp = "$Path.$PID.$([Guid]::NewGuid().ToString('N')).tmp"
-    $replaceBackup = "$Path.$PID.$([Guid]::NewGuid().ToString('N')).replace-backup"
     $deadline = [DateTime]::UtcNow.AddSeconds(3)
     $lockStream = $null
     while (-not $lockStream) {
@@ -66,7 +70,20 @@ function Write-ByokJsonAtomic {
         } catch [System.IO.IOException] {
             if (Test-Path -LiteralPath $lock) {
                 $age = [DateTime]::UtcNow - (Get-Item -LiteralPath $lock).LastWriteTimeUtc
-                if ($age.TotalSeconds -gt 30) { Remove-Item -LiteralPath $lock -Force; continue }
+                if ($age.TotalSeconds -gt 30) {
+                    $ownerAlive = $false
+                    try {
+                        $ownerText = [IO.File]::ReadAllText($lock, [Text.Encoding]::UTF8).Trim()
+                        $ownerPid = 0
+                        if ([int]::TryParse(($ownerText -split '\s+')[0], [ref]$ownerPid)) {
+                            $ownerAlive = $null -ne (Get-Process -Id $ownerPid -ErrorAction SilentlyContinue)
+                        }
+                    } catch { }
+                    if (-not $ownerAlive) {
+                        Remove-Item -LiteralPath $lock -Force -ErrorAction SilentlyContinue
+                        continue
+                    }
+                }
             }
             if ([DateTime]::UtcNow -ge $deadline) { throw "Timed out waiting for data lock '$lock'." }
             Start-Sleep -Milliseconds 25
@@ -76,8 +93,18 @@ function Write-ByokJsonAtomic {
         $lockBytes = [Text.Encoding]::UTF8.GetBytes("$PID $([DateTime]::UtcNow.ToString('o'))`n")
         $lockStream.Write($lockBytes, 0, $lockBytes.Length)
         $lockStream.Flush($true)
-        $lockStream.Dispose(); $lockStream = $null
+        return (& $Operation)
+    } finally {
+        if ($lockStream) { $lockStream.Dispose() }
+        Remove-Item -LiteralPath $lock -Force -ErrorAction SilentlyContinue
+    }
+}
 
+function Write-ByokJsonAtomicUnlocked {
+    param([string]$Path, $Value)
+    $tmp = "$Path.$PID.$([Guid]::NewGuid().ToString('N')).tmp"
+    $replaceBackup = "$Path.$PID.$([Guid]::NewGuid().ToString('N')).replace-backup"
+    try {
         $json = ($Value | ConvertTo-Json -Depth 20) + "`n"
         $bytes = (New-Object System.Text.UTF8Encoding $false).GetBytes($json)
         $stream = New-Object System.IO.FileStream($tmp, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None, 4096, [System.IO.FileOptions]::WriteThrough)
@@ -89,11 +116,14 @@ function Write-ByokJsonAtomic {
             [System.IO.File]::Move($tmp, $Path)
         }
     } finally {
-        if ($lockStream) { $lockStream.Dispose() }
         Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $replaceBackup -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $lock -Force -ErrorAction SilentlyContinue
     }
+}
+
+function Write-ByokJsonAtomic {
+    param([string]$Path, $Value)
+    Invoke-WithByokFileLock $Path { Write-ByokJsonAtomicUnlocked $Path $Value }
 }
 
 function Assert-ByokEnvMap {
@@ -135,9 +165,50 @@ function Assert-ByokProviderConfig {
                 throw "Invalid provider config at $basePath.baseUrl: absolute http(s) URL without credentials/query/fragment required."
             }
         }
+        if ($null -ne $provider.modelCacheTtlSeconds) {
+            $ttlValue = 0.0
+            if (-not [double]::TryParse("$($provider.modelCacheTtlSeconds)", [ref]$ttlValue) -or $ttlValue -lt 0) {
+                throw "Invalid provider config at $basePath.modelCacheTtlSeconds: non-negative number required."
+            }
+        }
         foreach ($field in @('apiKeyEnv','apiKeyEnvNames','modelEnvNames')) {
             foreach ($name in @($provider.$field)) {
                 if ($name -and "$name" -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') { throw "Invalid provider config at $basePath.${field}: invalid environment variable name." }
+            }
+        }
+        foreach ($headerField in @('apiKeyHeader')) {
+            $headerValue = $provider.$headerField
+            if ($headerValue -and "$headerValue" -notmatch "^[!#\$%&'*+.^_``|~0-9A-Za-z-]+$") {
+                throw "Invalid provider config at $basePath.${headerField}: invalid HTTP header name."
+            }
+        }
+        if ($null -ne $provider.apiKeyPrefix -and $provider.apiKeyPrefix -isnot [string]) {
+            throw "Invalid provider config at $basePath.apiKeyPrefix: string required."
+        }
+        if ($provider.modelsApi) {
+            if ($provider.modelsApi -is [string] -or $provider.modelsApi -is [System.Collections.IEnumerable]) {
+                throw "Invalid provider config at $basePath.modelsApi: object required."
+            }
+            foreach ($field in @('path', 'itemsPath', 'idPath', 'apiKeyPrefix')) {
+                if ($null -ne $provider.modelsApi.$field -and $provider.modelsApi.$field -isnot [string]) {
+                    throw "Invalid provider config at $basePath.modelsApi.${field}: string required."
+                }
+            }
+            if ($provider.modelsApi.apiKeyHeader -and "$($provider.modelsApi.apiKeyHeader)" -notmatch "^[!#\$%&'*+.^_``|~0-9A-Za-z-]+$") {
+                throw "Invalid provider config at $basePath.modelsApi.apiKeyHeader: invalid HTTP header name."
+            }
+        }
+        if ($null -ne $provider.models) {
+            if ($provider.models -is [string] -or $provider.models -isnot [System.Collections.IEnumerable]) {
+                throw "Invalid provider config at $basePath.models: array required."
+            }
+            $modelIndex = 0
+            foreach ($model in @($provider.models)) {
+                $modelId = if ($model -is [string]) { $model } elseif ($model) { $model.id } else { $null }
+                if ($modelId -isnot [string] -or -not "$modelId".Trim() -or "$modelId".Length -gt 512 -or "$modelId" -match '[\x00-\x1F\x7F]') {
+                    throw "Invalid provider config at $basePath.models[$modelIndex]: valid model ID required."
+                }
+                $modelIndex += 1
             }
         }
         if ($provider.environment) {
@@ -151,8 +222,8 @@ function Assert-ByokProviderConfig {
 # --- provider config ----------------------------------------------------------
 
 function Load-ByokProviderConfig {
-    param([string]$DataDir = (Get-ByokDataDir))
-    $configPath = Get-ByokConfigPath $DataDir
+    param([string]$DataDir = (Get-ByokDataDir), [switch]$ReadOnly)
+    $configPath = Get-ByokConfigPath $DataDir -NoMigrate:$ReadOnly
     $parsed = Read-ByokJson $configPath @{ version = 1; providers = @{} }
     Assert-ByokProviderConfig $parsed | Out-Null
     $list = @()
@@ -204,6 +275,8 @@ function Update-ByokCacheForProvider {
         [string]$ProviderId, [string]$BaseUrl, [string]$ApiPath,
         [string[]]$ModelIds, [string]$DataDir = (Get-ByokDataDir)
     )
+    $cachePath = Get-ByokCachePath $DataDir
+    return (Invoke-WithByokFileLock $cachePath {
     $cache = Read-ByokCache $DataDir
     # Normalize caches into a hashtable keyed by provider id.
     $caches = [ordered]@{}
@@ -255,8 +328,9 @@ function Update-ByokCacheForProvider {
         models     = $modelsList
     }
     $newCache = [ordered]@{ version = 1; caches = $caches }
-    Write-ByokCache $newCache $DataDir
+    Write-ByokJsonAtomicUnlocked $cachePath $newCache
     return ($modelsList | Where-Object { $_.available } | ForEach-Object { $_.id })
+    })
 }
 
 # --- env map ------------------------------------------------------------------
@@ -517,46 +591,118 @@ function Build-ByokRuntimeEnvMap {
 # --- model fetch --------------------------------------------------------------
 
 function Invoke-ByokModelFetch {
-    param($Provider, [string]$BaseUrl, [string]$ApiKey)
+    param(
+        $Provider,
+        [string]$BaseUrl,
+        [string]$ApiKey,
+        [int]$TimeoutSeconds = 10,
+        [int]$MaximumBytes = 2097152
+    )
     $api = $Provider.modelsApi
     if (-not $api) { $api = [pscustomobject]@{} }
     $apiPath = if ($api.path) { $api.path } else { '/models' }
-    $cleanBase = $BaseUrl.TrimEnd('/')
+    $baseUri = $null
+    if (-not [Uri]::TryCreate("$BaseUrl".Trim(), [UriKind]::Absolute, [ref]$baseUri) -or
+        $baseUri.Scheme -notin @('http', 'https') -or $baseUri.UserInfo -or $baseUri.Query -or $baseUri.Fragment) {
+        throw 'Base URL must be an absolute http(s) URL without credentials, query, or fragment.'
+    }
+    if ("$apiPath" -match '[\r\n?#]') { throw 'Models API path must not contain control characters, query, or fragment.' }
+    $cleanBase = $baseUri.AbsoluteUri.TrimEnd('/')
     if (-not $apiPath.StartsWith('/')) { $apiPath = '/' + $apiPath }
     $fullUrl = "$cleanBase$apiPath"
+    $fullUri = $null
+    if (-not [Uri]::TryCreate($fullUrl, [UriKind]::Absolute, [ref]$fullUri) -or
+        $fullUri.Scheme -notin @('http', 'https') -or $fullUri.UserInfo -or $fullUri.Query -or $fullUri.Fragment) {
+        throw 'Resolved models URL is invalid.'
+    }
+    $safeOrigin = $fullUri.GetLeftPart([System.UriPartial]::Authority)
 
-    $headers = @{ 'Accept' = 'application/json' }
+    $headerName = if ($api.apiKeyHeader) { "$($api.apiKeyHeader)" } elseif ($Provider.apiKeyHeader) { "$($Provider.apiKeyHeader)" } else { 'Authorization' }
+    if ($headerName -notmatch "^[!#\$%&'*+.^_``|~0-9A-Za-z-]+$") { throw 'Configured API key header name is invalid.' }
+    $prefix = if ($api.PSObject.Properties.Name -contains 'apiKeyPrefix') { "$($api.apiKeyPrefix)" } elseif ($Provider.PSObject.Properties.Name -contains 'apiKeyPrefix') { "$($Provider.apiKeyPrefix)" } else { 'Bearer ' }
+
+    Add-Type -AssemblyName System.Net.Http
+    $handler = New-Object System.Net.Http.HttpClientHandler
+    $handler.AllowAutoRedirect = $false
+    $client = New-Object System.Net.Http.HttpClient($handler)
+    $client.Timeout = [TimeSpan]::FromSeconds($TimeoutSeconds)
+    $client.DefaultRequestHeaders.TryAddWithoutValidation('Accept', 'application/json') | Out-Null
     if ($ApiKey) {
-        $headerName = if ($api.apiKeyHeader) { $api.apiKeyHeader } elseif ($Provider.apiKeyHeader) { $Provider.apiKeyHeader } else { 'Authorization' }
-        $prefix = if ($api.apiKeyPrefix) { $api.apiKeyPrefix } elseif ($Provider.apiKeyPrefix) { $Provider.apiKeyPrefix } else { 'Bearer ' }
-        $headers[$headerName] = "$prefix$ApiKey"
-    }
-
-    try {
-        $resp = Invoke-RestMethod -Uri $fullUrl -Method Get -Headers $headers -TimeoutSec 10 -ErrorAction Stop
-    } catch {
-        $msg = $_.Exception.Message
-        if ($_.Exception.Response) {
-            $code = [int]$_.Exception.Response.StatusCode
-            throw "Provider returned HTTP $code."
+        if (-not $client.DefaultRequestHeaders.TryAddWithoutValidation($headerName, "$prefix$ApiKey")) {
+            throw 'Configured API key header could not be added to the request.'
         }
-        throw "Unable to fetch models: $msg"
     }
 
-    $itemsPath = if ($api.itemsPath) { $api.itemsPath } else { 'data' }
-    $idPath = if ($api.idPath) { $api.idPath } else { 'id' }
+    $response = $null
+    $stream = $null
+    $memory = $null
+    try {
+        $response = $client.GetAsync($fullUri, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+        if (-not $response.IsSuccessStatusCode) {
+            throw "Provider at $safeOrigin returned HTTP $([int]$response.StatusCode)."
+        }
+        $mediaType = if ($response.Content.Headers.ContentType) { "$($response.Content.Headers.ContentType.MediaType)" } else { '' }
+        if ($mediaType -notmatch '(?i)(^|[+/])json$') {
+            $displayMediaType = if ([string]::IsNullOrWhiteSpace($mediaType)) { 'unknown' } else { $mediaType }
+            throw "Expected a JSON response from $safeOrigin; received '$displayMediaType'."
+        }
+        $declaredLength = $response.Content.Headers.ContentLength
+        if ($null -ne $declaredLength -and [long]$declaredLength -gt $MaximumBytes) {
+            throw "Provider response exceeds the $MaximumBytes-byte limit."
+        }
+
+        $stream = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+        $memory = New-Object IO.MemoryStream
+        $buffer = New-Object byte[] 8192
+        $total = 0
+        while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $total += $read
+            if ($total -gt $MaximumBytes) { throw "Provider response exceeds the $MaximumBytes-byte limit." }
+            $memory.Write($buffer, 0, $read)
+        }
+        $body = [Text.Encoding]::UTF8.GetString($memory.ToArray()).TrimStart([char]0xFEFF)
+        try { $resp = $body | ConvertFrom-Json } catch { throw "Provider at $safeOrigin returned invalid JSON." }
+    } catch [System.Threading.Tasks.TaskCanceledException] {
+        throw "Request timed out after $TimeoutSeconds seconds when connecting to $safeOrigin."
+    } catch {
+        $message = $_.Exception.Message
+        if ($message -match '^(Provider|Expected|Request|Configured|Base URL|Models API|Resolved models URL)') { throw }
+        throw "Unable to fetch models from ${safeOrigin}: $message"
+    } finally {
+        if ($memory) { $memory.Dispose() }
+        if ($stream) { $stream.Dispose() }
+        if ($response) { $response.Dispose() }
+        if ($client) { $client.Dispose() }
+        if ($handler) { $handler.Dispose() }
+    }
+
+    $itemsPath = if ($api.itemsPath) { "$($api.itemsPath)" } else { 'data' }
+    $idPath = if ($api.idPath) { "$($api.idPath)" } else { 'id' }
     $items = $resp
-    foreach ($part in ($itemsPath -split '\.')) { $items = $items.$part }
-    if ($null -eq $items) { throw 'Provider returned an unsupported models payload.' }
+    foreach ($part in ($itemsPath -split '\.' | Where-Object { $_ })) {
+        if ($null -eq $items) { break }
+        $property = $items.PSObject.Properties[$part]
+        $items = if ($property) { $property.Value } else { $null }
+    }
+    if ($null -eq $items -and $resp -is [System.Array]) { $items = $resp }
+    if ($null -eq $items -or $items -is [string] -or $items -isnot [System.Collections.IEnumerable]) {
+        throw "Provider response from $safeOrigin does not contain an array at '$itemsPath'."
+    }
 
     $ids = [System.Collections.Generic.List[string]]::new()
-    $seen = @{}
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
     foreach ($item in @($items)) {
-        $cur = $item
-        foreach ($part in ($idPath -split '\.')) { $cur = $cur.$part }
+        $cur = if ($item -is [string]) { $item } else { $item }
+        if ($item -isnot [string]) {
+            foreach ($part in ($idPath -split '\.' | Where-Object { $_ })) {
+                if ($null -eq $cur) { break }
+                $property = $cur.PSObject.Properties[$part]
+                $cur = if ($property) { $property.Value } else { $null }
+            }
+        }
         if ($null -ne $cur) {
             $s = "$cur".Trim()
-            if ($s -and -not $seen.ContainsKey($s)) { $seen[$s] = $true; $ids.Add($s) }
+            if ($s -and $s.Length -le 512 -and $s -notmatch '[\x00-\x1F\x7F]' -and $seen.Add($s)) { $ids.Add($s) }
         }
     }
     return $ids.ToArray()

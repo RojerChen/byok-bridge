@@ -56,6 +56,17 @@ function writeJsonUnlocked(filePath, value) {
   }
 }
 
+function lockOwnerIsAlive(lockPath) {
+  try {
+    const ownerPid = Number.parseInt(fs.readFileSync(lockPath, "utf8").trim().split(/\s+/)[0], 10);
+    if (!Number.isInteger(ownerPid) || ownerPid <= 0) return false;
+    process.kill(ownerPid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
+
 function withFileLock(filePath, operation) {
   const lockPath = `${filePath}.lock`;
   const deadline = Date.now() + 3000;
@@ -70,7 +81,7 @@ function withFileLock(filePath, operation) {
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
       try {
-        if (Date.now() - fs.statSync(lockPath).mtimeMs > 30000) {
+        if (Date.now() - fs.statSync(lockPath).mtimeMs > 30000 && !lockOwnerIsAlive(lockPath)) {
           fs.unlinkSync(lockPath);
           continue;
         }

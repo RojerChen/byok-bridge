@@ -123,7 +123,7 @@ async function main() {
     return;
   }
 
-    const config = loadProviderConfig(dataDir, { initialize: !options.dryRun });
+  const config = loadProviderConfig(dataDir, { initialize: !options.dryRun });
   const state = readState(dataDir) || {};
 
   const rememberedCliId = state.cliId || null;
@@ -188,7 +188,9 @@ async function main() {
     let defaultIdx = config.providers.findIndex(p => p.id === rememberedProviderId);
     if (defaultIdx === -1) defaultIdx = 0;
 
-    const menuItems = [...config.providers, { id: '+', name: 'Add a new provider...' }];
+    const menuItems = options.dryRun
+      ? [...config.providers]
+      : [...config.providers, { id: '+', name: 'Add a new provider...' }];
     const selection = await selectMenuItem(
       'Available providers:',
       menuItems,

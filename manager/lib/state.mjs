@@ -103,6 +103,17 @@ function sleep(milliseconds) {
   Atomics.wait(sleepCell, 0, 0, milliseconds);
 }
 
+function lockOwnerIsAlive(lockPath) {
+  try {
+    const ownerPid = Number.parseInt(fs.readFileSync(lockPath, 'utf8').trim().split(/\s+/)[0], 10);
+    if (!Number.isInteger(ownerPid) || ownerPid <= 0) return false;
+    process.kill(ownerPid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === 'EPERM';
+  }
+}
+
 function withFileLock(filePath, operation, timeoutMs = LOCK_TIMEOUT_MS) {
   const lockPath = `${filePath}.lock`;
   const deadline = Date.now() + timeoutMs;
@@ -125,7 +136,7 @@ function withFileLock(filePath, operation, timeoutMs = LOCK_TIMEOUT_MS) {
 
       try {
         const age = Date.now() - fs.statSync(lockPath).mtimeMs;
-        if (age > STALE_LOCK_MS) {
+        if (age > STALE_LOCK_MS && !lockOwnerIsAlive(lockPath)) {
           fs.unlinkSync(lockPath);
           continue;
         }

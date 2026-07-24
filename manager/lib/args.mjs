@@ -77,9 +77,16 @@ export function parseArgs(argv) {
   }
 
   if (options.help && seen.size > 1) throw new UsageError('--help cannot be combined with other options.');
-  if (options.selfCheck && (seen.size > 1 || options.passthroughArgs.length > 0)) {
-    throw new UsageError('--self-check cannot be combined with launch options.');
+  if (options.selfCheck) {
+    const selfCheckOptions = new Set(['selfCheck', 'dataDir']);
+    const hasLaunchOption = [...seen].some((option) => !selfCheckOptions.has(option));
+    if (hasLaunchOption || options.passthroughArgs.length > 0) {
+      throw new UsageError('--self-check cannot be combined with launch options.');
+    }
   }
   if (options.refresh && options.dryRun) throw new UsageError('--refresh and --dry-run cannot be combined.');
+  if (options.dryRun && options.provider === '+') {
+    throw new UsageError("--dry-run cannot be combined with '--provider +', because adding a provider is a persistent change.");
+  }
   return options;
 }

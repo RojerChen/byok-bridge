@@ -180,6 +180,11 @@ describe('BYOK CLI Hub Node Manager Unit & Integration Tests', () => {
     assert.throws(() => parseArgs(['--wat']), UsageError);
     assert.throws(() => parseArgs(['--emit-env']), UsageError);
     assert.throws(() => parseArgs(['--model', 'a', '--model', 'b']), UsageError);
+    assert.throws(() => parseArgs(['--dry-run', '--provider', '+']), UsageError);
+    const selfCheck = parseArgs(['--data-dir', '/tmp/byok-test', '--self-check']);
+    assert.equal(selfCheck.selfCheck, true);
+    assert.equal(selfCheck.dataDir, '/tmp/byok-test');
+    assert.throws(() => parseArgs(['--self-check', '--provider', 'local']), UsageError);
     assert.deepEqual(parseArgs(['--cli', 'copilot', '--', '--verbose']).passthroughArgs, ['--verbose']);
   });
 
@@ -279,6 +284,21 @@ describe('BYOK CLI Hub Node Manager Unit & Integration Tests', () => {
     assert.equal(result.status, 0, result.stderr);
     assert.equal(fs.existsSync(path.join(tmpDir, 'state.json')), false);
     assert.equal(fs.existsSync(path.join(tmpDir, 'models-cache.json')), false);
+
+    const legacyDir = path.join(tmpDir, 'legacy-only');
+    fs.mkdirSync(path.join(legacyDir, 'config'), { recursive: true });
+    fs.writeFileSync(path.join(legacyDir, 'config', 'providers.json'), `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+    const legacyDryRun = spawnSync(process.execPath, [
+      managerPath,
+      '--data-dir', legacyDir,
+      '--cli', 'test',
+      '--provider', 'static',
+      '--dry-run'
+    ], { encoding: 'utf8' });
+    assert.equal(legacyDryRun.status, 0, legacyDryRun.stderr);
+    assert.equal(fs.existsSync(path.join(legacyDir, 'providers.json')), false);
+    assert.equal(fs.existsSync(path.join(legacyDir, 'state.json')), false);
+    assert.equal(fs.existsSync(path.join(legacyDir, 'models-cache.json')), false);
 
     const rejected = spawnSync(process.execPath, [managerPath, '--emit-env'], { encoding: 'utf8' });
     assert.equal(rejected.status, 2);

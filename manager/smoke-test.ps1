@@ -34,6 +34,10 @@ try {
     $providersPath = Join-Path $dataDir 'config\providers.json'
     $providers | ConvertTo-Json -Depth 20 | Set-Content -Path $providersPath -Encoding UTF8
 
+    $readOnlyCfg = Load-ByokProviderConfig $dataDir -ReadOnly
+    if ($readOnlyCfg.configPath -ne $providersPath) { throw "read-only config lookup did not use the legacy path" }
+    if (Test-Path -LiteralPath (Join-Path $dataDir 'providers.json')) { throw "read-only config lookup migrated the legacy config" }
+
     $cfg = Load-ByokProviderConfig $dataDir
     if ($cfg.configPath -ne (Join-Path $dataDir 'providers.json')) { throw "config was not migrated to canonical root: $($cfg.configPath)" }
     if ($cfg.providers.Count -ne 1) { throw "expected 1 enabled provider, got $($cfg.providers.Count)" }

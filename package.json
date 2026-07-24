@@ -1,12 +1,13 @@
 {
   "name": "byok-cli-hub",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "type": "module",
   "description": "Configuration-driven BYOK launcher and hub for multiple AI CLIs",
   "scripts": {
-    "test": "node --test manager/*.test.mjs",
+    "test": "node --test manager/*.test.mjs tests/*.test.mjs",
     "smoke": "powershell -NoProfile -ExecutionPolicy Bypass -File manager/smoke-test.ps1",
-    "test:windows-installer": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/windows-installer.test.ps1"
+    "test:windows-installer": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/windows-installer.test.ps1",
+    "test:powershell-http": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/powershell-http.test.ps1"
   }
 }

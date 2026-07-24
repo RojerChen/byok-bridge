@@ -18,10 +18,15 @@ EXT_BACKUP_DIR=""
 SWITCHED_INSTALL=0
 SWITCHED_SHIM=0
 SWITCHED_EXTENSION=0
+APP_VERSION=""
 
 die() {
   echo "Error: $*" >&2
   exit 1
+}
+
+failure_point() {
+  [[ "${BYOK_CLI_HUB_TEST_FAIL_AT:-}" != "$1" ]] || die "Injected installer failure at '$1'."
 }
 
 print_help() {
@@ -77,6 +82,8 @@ NODE_MAJOR="$(node -e "process.stdout.write(process.versions.node.split('.')[0])
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd -P)"
+APP_VERSION="$(node -e 'const p=require(process.argv[1]); if(typeof p.version!=="string"||!p.version) process.exit(1); process.stdout.write(p.version)' "$REPO_ROOT/package.json")" \
+  || die "Source package version is missing."
 command -v realpath >/dev/null 2>&1 || die "The 'realpath' command is required."
 HOME_CANON="$(realpath -m -- "$HOME")"
 
@@ -136,6 +143,7 @@ assert_not_overlapping 'install-dir' "$TARGET_INSTALL_DIR" 'bin-dir' "$TARGET_BI
 assert_not_overlapping 'data-dir' "$TARGET_DATA_DIR" 'bin-dir' "$TARGET_BIN_DIR"
 assert_not_overlapping 'install-dir' "$TARGET_INSTALL_DIR" 'extension-dir' "$TARGET_EXT_DIR"
 assert_not_overlapping 'data-dir' "$TARGET_DATA_DIR" 'extension-dir' "$TARGET_EXT_DIR"
+assert_not_overlapping 'bin-dir' "$TARGET_BIN_DIR" 'extension-dir' "$TARGET_EXT_DIR"
 
 echo "=== BYOK CLI Hub Installer ==="
 echo "[OK] Node.js: $(node --version)"
@@ -164,15 +172,39 @@ if [[ -f "$MANIFEST_PATH" ]]; then
   PREVIOUS_VALUES="$(node -e '
     const fs = require("node:fs");
     const m = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-    if (m.product !== "byok-cli-hub" || m.schemaVersion !== 1) process.exit(2);
-    for (const key of ["dataDir", "binDir", "extensionDir", "withExtension"])
+    const parseVersion = value => {
+      const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(value);
+      return match && match.slice(1).map(Number);
+    };
+    const previousVersion = parseVersion(m.appVersion);
+    const sourceVersion = parseVersion(process.argv[2]);
+    if (m.product !== "byok-cli-hub" || m.schemaVersion !== 1 || !previousVersion || !sourceVersion || typeof m.withExtension !== "boolean") process.exit(2);
+    for (let index = 0; index < 3; index += 1) {
+      if (previousVersion[index] > sourceVersion[index]) process.exit(3);
+      if (previousVersion[index] < sourceVersion[index]) break;
+    }
+    for (const key of ["installDir", "dataDir", "binDir", "extensionDir", "withExtension"])
       process.stdout.write(String(m[key] ?? "") + "\n");
-  ' "$MANIFEST_PATH")" || die "Existing install manifest is invalid."
+  ' "$MANIFEST_PATH" "$APP_VERSION")" || die "Existing install manifest is invalid or belongs to a newer application version."
   mapfile -t PREVIOUS_FIELDS <<< "$PREVIOUS_VALUES"
-  [[ -n "$DATA_DIR" ]] || TARGET_DATA_DIR="$(canonicalize_absolute 'manifest dataDir' "${PREVIOUS_FIELDS[0]}")"
-  [[ -n "$BIN_DIR" ]] || TARGET_BIN_DIR="$(canonicalize_absolute 'manifest binDir' "${PREVIOUS_FIELDS[1]}")"
-  TARGET_EXT_DIR="$(canonicalize_absolute 'manifest extensionDir' "${PREVIOUS_FIELDS[2]}")"
-  [[ "${PREVIOUS_FIELDS[3]}" != "true" ]] || WITH_EXTENSION=1
+  MANIFEST_INSTALL_DIR="$(canonicalize_absolute 'manifest installDir' "${PREVIOUS_FIELDS[0]}")"
+  MANIFEST_DATA_DIR="$(canonicalize_absolute 'manifest dataDir' "${PREVIOUS_FIELDS[1]}")"
+  MANIFEST_BIN_DIR="$(canonicalize_absolute 'manifest binDir' "${PREVIOUS_FIELDS[2]}")"
+  MANIFEST_EXT_DIR="$(canonicalize_absolute 'manifest extensionDir' "${PREVIOUS_FIELDS[3]}")"
+  [[ "$MANIFEST_INSTALL_DIR" == "$TARGET_INSTALL_DIR" ]] || die "Manifest installDir does not match the requested target."
+  assert_safe_target 'manifest data-dir' "$MANIFEST_DATA_DIR"
+  assert_safe_target 'manifest bin-dir' "$MANIFEST_BIN_DIR"
+  assert_safe_target 'manifest extension-dir' "$MANIFEST_EXT_DIR"
+  assert_not_overlapping 'manifest install-dir' "$TARGET_INSTALL_DIR" 'manifest data-dir' "$MANIFEST_DATA_DIR"
+  assert_not_overlapping 'manifest install-dir' "$TARGET_INSTALL_DIR" 'manifest bin-dir' "$MANIFEST_BIN_DIR"
+  assert_not_overlapping 'manifest data-dir' "$MANIFEST_DATA_DIR" 'manifest bin-dir' "$MANIFEST_BIN_DIR"
+  assert_not_overlapping 'manifest install-dir' "$TARGET_INSTALL_DIR" 'manifest extension-dir' "$MANIFEST_EXT_DIR"
+  assert_not_overlapping 'manifest data-dir' "$MANIFEST_DATA_DIR" 'manifest extension-dir' "$MANIFEST_EXT_DIR"
+  assert_not_overlapping 'manifest bin-dir' "$MANIFEST_BIN_DIR" 'manifest extension-dir' "$MANIFEST_EXT_DIR"
+  [[ -n "$DATA_DIR" ]] || TARGET_DATA_DIR="$MANIFEST_DATA_DIR"
+  [[ -n "$BIN_DIR" ]] || TARGET_BIN_DIR="$MANIFEST_BIN_DIR"
+  TARGET_EXT_DIR="$MANIFEST_EXT_DIR"
+  [[ "${PREVIOUS_FIELDS[4]}" != "true" ]] || WITH_EXTENSION=1
   SHIM_PATH="$TARGET_BIN_DIR/byok-cli-hub"
   assert_safe_target 'data-dir' "$TARGET_DATA_DIR"
   assert_safe_target 'bin-dir' "$TARGET_BIN_DIR"
@@ -180,6 +212,9 @@ if [[ -f "$MANIFEST_PATH" ]]; then
   assert_not_overlapping 'install-dir' "$TARGET_INSTALL_DIR" 'data-dir' "$TARGET_DATA_DIR"
   assert_not_overlapping 'install-dir' "$TARGET_INSTALL_DIR" 'bin-dir' "$TARGET_BIN_DIR"
   assert_not_overlapping 'data-dir' "$TARGET_DATA_DIR" 'bin-dir' "$TARGET_BIN_DIR"
+  assert_not_overlapping 'install-dir' "$TARGET_INSTALL_DIR" 'extension-dir' "$TARGET_EXT_DIR"
+  assert_not_overlapping 'data-dir' "$TARGET_DATA_DIR" 'extension-dir' "$TARGET_EXT_DIR"
+  assert_not_overlapping 'bin-dir' "$TARGET_BIN_DIR" 'extension-dir' "$TARGET_EXT_DIR"
 fi
 if [[ -e "$TARGET_INSTALL_DIR" && ! -f "$MANIFEST_PATH" ]]; then
   if [[ "$ADOPT_LEGACY" -ne 1 || ! -f "$TARGET_INSTALL_DIR/manager/manager.mjs" ]]; then
@@ -195,6 +230,8 @@ if [[ "$WITH_EXTENSION" -eq 1 && -e "$TARGET_EXT_DIR" && ! -f "$TARGET_EXT_DIR/.
   if [[ "$ADOPT_LEGACY" -ne 1 || ! -f "$TARGET_EXT_DIR/extension.mjs" ]]; then
     die "Refusing to overwrite unowned extension: $TARGET_EXT_DIR"
   fi
+elif [[ "$WITH_EXTENSION" -eq 0 && -e "$TARGET_EXT_DIR" && ! -f "$TARGET_EXT_DIR/.byok-cli-hub-managed" ]]; then
+  echo "[WARNING] Preserving unowned extension: $TARGET_EXT_DIR" >&2
 fi
 
 umask 077
@@ -229,17 +266,23 @@ rollback() {
   trap - EXIT INT TERM
   if [[ "$status" -ne 0 ]]; then
     echo "[ERROR] Installation failed; restoring the previous installation." >&2
-    if [[ "$SWITCHED_EXTENSION" -eq 1 ]]; then
+    if [[ -n "$EXT_BACKUP_DIR" && -d "$EXT_BACKUP_DIR" ]]; then
       rm -rf -- "$TARGET_EXT_DIR"
-      [[ -d "$EXT_BACKUP_DIR" ]] && mv -- "$EXT_BACKUP_DIR" "$TARGET_EXT_DIR"
+      mv -- "$EXT_BACKUP_DIR" "$TARGET_EXT_DIR"
+    elif [[ "$SWITCHED_EXTENSION" -eq 1 ]]; then
+      rm -rf -- "$TARGET_EXT_DIR"
     fi
-    if [[ "$SWITCHED_SHIM" -eq 1 ]]; then
+    if [[ -f "$SHIM_BACKUP" ]]; then
       rm -f -- "$SHIM_PATH"
-      [[ -f "$SHIM_BACKUP" ]] && mv -- "$SHIM_BACKUP" "$SHIM_PATH"
+      mv -- "$SHIM_BACKUP" "$SHIM_PATH"
+    elif [[ "$SWITCHED_SHIM" -eq 1 ]]; then
+      rm -f -- "$SHIM_PATH"
     fi
-    if [[ "$SWITCHED_INSTALL" -eq 1 ]]; then
+    if [[ -d "$BACKUP_DIR" ]]; then
       rm -rf -- "$TARGET_INSTALL_DIR"
-      [[ -d "$BACKUP_DIR" ]] && mv -- "$BACKUP_DIR" "$TARGET_INSTALL_DIR"
+      mv -- "$BACKUP_DIR" "$TARGET_INSTALL_DIR"
+    elif [[ "$SWITCHED_INSTALL" -eq 1 ]]; then
+      rm -rf -- "$TARGET_INSTALL_DIR"
     fi
   fi
   [[ -n "$STAGING_DIR" && -d "$STAGING_DIR" ]] && rm -rf -- "$STAGING_DIR"
@@ -273,18 +316,30 @@ exec $INSTALL_Q/bin/linux/run.sh "\$@"
 EOF
 chmod 755 "$SHIM_TEMP"
 
+BYOK_MANIFEST_APP_VERSION="$APP_VERSION" \
+BYOK_MANIFEST_INSTALL_DIR="$TARGET_INSTALL_DIR" \
+BYOK_MANIFEST_DATA_DIR="$TARGET_DATA_DIR" \
+BYOK_MANIFEST_BIN_DIR="$TARGET_BIN_DIR" \
+BYOK_MANIFEST_EXTENSION_DIR="$TARGET_EXT_DIR" \
+BYOK_MANIFEST_WITH_EXTENSION="$WITH_EXTENSION" \
+MSYS2_ARG_CONV_EXCL='*' \
+MSYS_NO_PATHCONV=1 \
 node -e '
-  const fs = require("node:fs");
-  const [file, installDir, dataDir, binDir, extensionDir, withExtension] = process.argv.slice(1);
-  fs.writeFileSync(file, JSON.stringify({
+  const env = process.env;
+  process.stdout.write(JSON.stringify({
     schemaVersion: 1,
     product: "byok-cli-hub",
+    appVersion: env.BYOK_MANIFEST_APP_VERSION,
     installedAt: new Date().toISOString(),
-    installDir, dataDir, binDir, extensionDir,
-    withExtension: withExtension === "1",
+    installDir: env.BYOK_MANIFEST_INSTALL_DIR,
+    dataDir: env.BYOK_MANIFEST_DATA_DIR,
+    binDir: env.BYOK_MANIFEST_BIN_DIR,
+    extensionDir: env.BYOK_MANIFEST_EXTENSION_DIR,
+    withExtension: env.BYOK_MANIFEST_WITH_EXTENSION === "1",
     managedFiles: ["byok-cli-hub"]
-  }, null, 2) + "\n", { mode: 0o644 });
-' "$STAGING_DIR/$MANIFEST_NAME" "$TARGET_INSTALL_DIR" "$TARGET_DATA_DIR" "$TARGET_BIN_DIR" "$TARGET_EXT_DIR" "$WITH_EXTENSION"
+  }, null, 2) + "\n");
+' > "$STAGING_DIR/$MANIFEST_NAME"
+chmod 644 "$STAGING_DIR/$MANIFEST_NAME"
 
 if [[ "$WITH_EXTENSION" -eq 1 ]]; then
   [[ -d "$STAGING_DIR/extension" ]] || die "Bundled extension directory is missing."
@@ -297,12 +352,14 @@ fi
 
 [[ ! -e "$BACKUP_DIR" ]] || die "Backup path already exists: $BACKUP_DIR"
 if [[ -d "$TARGET_INSTALL_DIR" ]]; then mv -- "$TARGET_INSTALL_DIR" "$BACKUP_DIR"; fi
+failure_point 'after-app-backup'
 mv -- "$STAGING_DIR" "$TARGET_INSTALL_DIR"
 STAGING_DIR=""
 SWITCHED_INSTALL=1
 
 [[ ! -e "$SHIM_BACKUP" ]] || die "Shim backup path already exists: $SHIM_BACKUP"
 if [[ -f "$SHIM_PATH" ]]; then mv -- "$SHIM_PATH" "$SHIM_BACKUP"; fi
+failure_point 'after-shim-backup'
 mv -- "$SHIM_TEMP" "$SHIM_PATH"
 SHIM_TEMP=""
 SWITCHED_SHIM=1
@@ -310,6 +367,7 @@ SWITCHED_SHIM=1
 if [[ "$WITH_EXTENSION" -eq 1 ]]; then
   [[ ! -e "$EXT_BACKUP_DIR" ]] || die "Extension backup path already exists: $EXT_BACKUP_DIR"
   if [[ -d "$TARGET_EXT_DIR" ]]; then mv -- "$TARGET_EXT_DIR" "$EXT_BACKUP_DIR"; fi
+  failure_point 'after-extension-backup'
   mv -- "$EXT_STAGING_DIR" "$TARGET_EXT_DIR"
   EXT_STAGING_DIR=""
   SWITCHED_EXTENSION=1
@@ -317,9 +375,12 @@ fi
 
 node "$TARGET_INSTALL_DIR/manager/manager.mjs" --data-dir "$TARGET_DATA_DIR" --self-check
 
-[[ ! -d "$BACKUP_DIR" ]] || rm -rf -- "$BACKUP_DIR"
-[[ ! -f "$SHIM_BACKUP" ]] || rm -f -- "$SHIM_BACKUP"
-[[ -z "$EXT_BACKUP_DIR" || ! -d "$EXT_BACKUP_DIR" ]] || rm -rf -- "$EXT_BACKUP_DIR"
+failure_point 'before-backup-cleanup'
+# Backup cleanup is best effort. A cleanup error must never trigger rollback
+# after part of the previous installation has already been discarded.
+[[ ! -d "$BACKUP_DIR" ]] || rm -rf -- "$BACKUP_DIR" || echo "[WARNING] Could not remove backup: $BACKUP_DIR" >&2
+[[ ! -f "$SHIM_BACKUP" ]] || rm -f -- "$SHIM_BACKUP" || echo "[WARNING] Could not remove shim backup: $SHIM_BACKUP" >&2
+[[ -z "$EXT_BACKUP_DIR" || ! -d "$EXT_BACKUP_DIR" ]] || rm -rf -- "$EXT_BACKUP_DIR" || echo "[WARNING] Could not remove extension backup: $EXT_BACKUP_DIR" >&2
 SWITCHED_INSTALL=0
 SWITCHED_SHIM=0
 SWITCHED_EXTENSION=0

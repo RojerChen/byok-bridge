@@ -1,8 +1,8 @@
 #requires -Version 5.1
 <###
     Official BYOK CLI Hub manager entry point.
-    The implementation remains in the legacy-named script for compatibility;
-    this forwarding entry point allows existing callers to migrate safely.
+    The implementation is kept in start-copilot-byok.ps1; this forwarding
+    entry point keeps the platform-neutral command name stable.
 ###>
 [CmdletBinding()]
 param(
@@ -21,6 +21,6 @@ foreach ($entry in $PSBoundParameters.GetEnumerator()) {
     $forward[$entry.Key] = $entry.Value
 }
 
-$legacy = Join-Path $PSScriptRoot 'start-copilot-byok-v3.ps1'
-& $legacy @forward
+$implementation = Join-Path $PSScriptRoot 'start-copilot-byok.ps1'
+& $implementation @forward
 exit $LASTEXITCODE

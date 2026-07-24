@@ -2,7 +2,7 @@
 
 BYOK CLI Hub selects a provider and model, builds a configuration-driven environment, and launches an AI CLI as a child process. Provider credentials are passed directly to that child process; they are not written to config/state/cache files or persisted in the caller's shell.
 
-Current version: `0.0.1`
+Current version: `0.0.2`
 
 ## Supported CLIs
 
@@ -53,7 +53,7 @@ The Copilot extension is opt-in:
 bin\win\install.cmd -WithExtension
 ```
 
-To adopt a recognizable extension from the pre-manifest installer, inspect it first and then run:
+The public Windows `0.0.1` layout is detected and migrated automatically. Its existing Copilot extension is treated as the user's enabled choice and becomes managed by `0.0.2`. For any other recognizable pre-manifest extension, inspect it first and explicitly opt in to adoption:
 
 ```bat
 bin\win\install.cmd -WithExtension -AdoptLegacy
@@ -90,6 +90,18 @@ bash bin/linux/install.sh \
 The resolved data directory is recorded in the managed install manifest and exported by the generated shim as `BYOK_CLI_HUB_DATA_DIR`, so the Manager and extension read the same state/cache.
 
 Use `--check` to validate prerequisites and paths without writing files. Upgrading a recognizable installation made before ownership manifests requires the explicit `--adopt-legacy` option.
+
+## Distribution and upgrades
+
+This project is distributed as source; `0.0.2` does not introduce an MSI, DEB/RPM, global npm package, or automatic updater.
+
+Repo mode means running `bin\win\run.cmd` or `bin/linux/run.sh` directly from a clone. Upgrade by running `git pull` or checking out a newer release tag. Repo mode does not copy an application snapshot or modify `PATH`, so it has no separate uninstall step.
+
+Installed mode means running the installer from downloaded or cloned release source. Upgrade by obtaining the newer source and rerunning that version's installer. The installer replaces only its managed application snapshot, shim/`PATH` entry, manifest, and optional managed extension; user config, state, and cache remain in the data directory. Use the installed uninstaller for removal.
+
+For a Windows `0.0.1` upgrade, run the `0.0.2` Windows installer normally. It validates the legacy config before creating `%USERPROFILE%\.byok-cli-hub\providers.json`, moves the application to `%LOCALAPPDATA%\byok-cli-hub\app`, migrates the user `PATH`, preserves state/cache and the original legacy config, and adopts a recognizable legacy extension. Unknown extension content is preserved without taking ownership. If validation or any switch step fails, the old launcher, extension, files, and original `PATH` are restored.
+
+Linux/WSL support is first released in `0.0.2`; there is no public Linux `0.0.1` migration contract. Windows and each Linux/WSL distro are independent installations with separate default data directories.
 
 ## Provider configuration
 
@@ -226,6 +238,8 @@ Neither uninstaller removes GitHub Copilot CLI or any other separately installed
 ```text
 npm test
 npm run smoke
+npm run test:windows-installer
+npm run test:powershell-http
 ```
 
-The Node tests cover config validation, damaged-file preservation, state/cache writes, endpoint-scoped cache freshness, HTTP limits, strict arguments, redaction, dry-run side effects, and launching. The PowerShell smoke test exercises the canonical Windows data contract.
+The tests cover config validation, damaged-file preservation, endpoint-scoped cache freshness, HTTP limits, strict arguments, redaction, side-effect-free dry-run, cross-runtime cache locking/stale-lock recovery, Windows `0.0.1` migration and rollback, and Linux install/update/uninstall transactions. The PowerShell smoke test exercises the canonical Windows data contract.

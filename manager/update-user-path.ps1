@@ -2,7 +2,8 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [Parameter(Mandatory = $true)][string]$Directory,
-    [switch]$Remove
+    [switch]$Remove,
+    [string]$PathValueFile = $env:BYOK_CLI_HUB_TEST_USER_PATH_FILE
 )
 
 $ErrorActionPreference = 'Stop'
@@ -19,6 +20,7 @@ function Get-NormalizedPathEntry {
 }
 
 function Send-EnvironmentChangedNotification {
+    if ($PathValueFile) { return }
     try {
         if (-not ('ByokCliHub.NativeMethods' -as [type])) {
             Add-Type -TypeDefinition @'
@@ -55,10 +57,33 @@ namespace ByokCliHub {
     }
 }
 
+function Get-UserPathValue {
+    if ($PathValueFile) {
+        if (Test-Path -LiteralPath $PathValueFile) {
+            return [IO.File]::ReadAllText([IO.Path]::GetFullPath($PathValueFile), [Text.Encoding]::UTF8)
+        }
+        return ''
+    }
+    return [Environment]::GetEnvironmentVariable('Path', 'User')
+}
+
+function Set-UserPathValue([string]$Value) {
+    if ($PathValueFile) {
+        $full = [IO.Path]::GetFullPath($PathValueFile)
+        $parent = Split-Path -Parent $full
+        if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+            New-Item -ItemType Directory -Force -Path $parent | Out-Null
+        }
+        [IO.File]::WriteAllText($full, $Value, (New-Object Text.UTF8Encoding $false))
+        return
+    }
+    [Environment]::SetEnvironmentVariable('Path', $Value, 'User')
+}
+
 $target = Get-NormalizedPathEntry $Directory
 if (-not $target) { throw 'A non-empty directory is required.' }
 
-$current = [Environment]::GetEnvironmentVariable('Path', 'User')
+$current = Get-UserPathValue
 $entries = @($current -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 $matching = @($entries | Where-Object {
     (Get-NormalizedPathEntry $_).Equals($target, [StringComparison]::OrdinalIgnoreCase)
@@ -83,7 +108,7 @@ if ($Remove) {
 }
 
 if ($PSCmdlet.ShouldProcess($target, $action)) {
-    [Environment]::SetEnvironmentVariable('Path', ($updatedEntries -join ';'), 'User')
+    Set-UserPathValue ($updatedEntries -join ';')
     Send-EnvironmentChangedNotification
     if ($Remove) { Write-Host "Removed from user PATH: $target" }
     else { Write-Host "Added to user PATH: $target" }

@@ -13,9 +13,6 @@ param(
     [string]$Model,
     [switch]$DryRun,
     [switch]$Refresh,
-    [switch]$EmitEnv,
-    [ValidateSet('cmd', 'ps')][string]$EmitEnvFormat = 'cmd',
-    [string]$EnvFile,
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$LaunchArgs
 )
 

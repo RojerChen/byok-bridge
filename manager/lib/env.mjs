@@ -112,6 +112,20 @@ export function buildRuntimeEnvMap(provider, baseUrl, model, apiKey, providerId,
   return map;
 }
 
+/**
+ * Marks values derived from the API key as sensitive. Redaction must follow the
+ * value source, not guesses based on environment variable names.
+ */
+export function getSensitiveEnvKeys(envMap, apiKey) {
+  const sensitive = new Set();
+  const secret = typeof apiKey === 'string' ? apiKey : '';
+  if (!secret) return sensitive;
+  for (const [name, value] of Object.entries(envMap || {})) {
+    if (String(value ?? '').includes(secret)) sensitive.add(name);
+  }
+  return sensitive;
+}
+
 export function resolveEnvValue(envNames) {
   if (!envNames) return '';
   const list = Array.isArray(envNames) ? envNames : [envNames];
@@ -128,12 +142,13 @@ export function resolveEnvValue(envNames) {
 
 export function getApiKeyEnvName(provider) {
   if (!provider) return 'COPILOT_PROVIDER_API_KEY';
-  if (Array.isArray(provider.apiKeyEnvNames) && provider.apiKeyEnvNames.length > 0) {
-    return provider.apiKeyEnvNames[0];
+  const names = Array.isArray(provider.apiKeyEnvNames) && provider.apiKeyEnvNames.length > 0
+    ? provider.apiKeyEnvNames
+    : (Array.isArray(provider.apiKeyEnv) ? provider.apiKeyEnv : []);
+  for (const name of names) {
+    if (typeof name === 'string' && process.env[name]?.trim()) return name;
   }
-  if (Array.isArray(provider.apiKeyEnv) && provider.apiKeyEnv.length > 0) {
-    return provider.apiKeyEnv[0];
-  }
+  if (names.length > 0) return names[0];
   return 'COPILOT_PROVIDER_API_KEY';
 }
 
@@ -171,8 +186,9 @@ export function resolveChosenModel(requestedModel, environmentModel, rememberedM
   return 'gpt-4o';
 }
 
-export function getApiKeySource(keyEnvName, fromPrompt = false) {
+export function getApiKeySource(keyEnvName, fromPrompt = false, fromArgument = false, apiKey = '') {
   if (fromPrompt) return 'prompt';
-  if (keyEnvName && process.env[keyEnvName]) return `env:${keyEnvName}`;
+  if (fromArgument) return 'argument';
+  if (apiKey && keyEnvName && process.env[keyEnvName]) return `env:${keyEnvName}`;
   return 'none';
 }

@@ -5,6 +5,8 @@
   "type": "module",
   "description": "Configuration-driven BYOK launcher and hub for multiple AI CLIs",
   "scripts": {
-    "smoke": "powershell -NoProfile -ExecutionPolicy Bypass -File manager/smoke-test.ps1"
+    "test": "node --test manager/*.test.mjs",
+    "smoke": "powershell -NoProfile -ExecutionPolicy Bypass -File manager/smoke-test.ps1",
+    "test:windows-installer": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/windows-installer.test.ps1"
   }
 }

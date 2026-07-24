@@ -21,8 +21,14 @@ function Get-ByokDataDir {
 
 function Get-ByokConfigPath {
     param([string]$DataDir)
-    $local = Join-Path $DataDir 'config\providers.json'
-    if (Test-Path $local) { return $local }
+    $local = Join-Path $DataDir 'providers.json'
+    if (Test-Path -LiteralPath $local) { return $local }
+    $legacy = Join-Path $DataDir 'config\providers.json'
+    if (Test-Path -LiteralPath $legacy) {
+        $legacyValue = Read-ByokJson $legacy $null
+        Write-ByokJsonAtomic $local $legacyValue
+        return $local
+    }
     $here = Split-Path -Parent $PSScriptRoot
     $repo = Join-Path $here 'config\providers.json'
     if (Test-Path $repo) { return $repo }
@@ -40,18 +46,106 @@ function Read-ByokJson {
         $raw = Get-Content -Raw -LiteralPath $Path -Encoding UTF8
         if (-not $raw) { return $Fallback }
         return ($raw | ConvertFrom-Json)
-    } catch { return $Fallback }
+    } catch {
+        throw "Invalid or unreadable JSON file '$Path': $($_.Exception.Message)"
+    }
 }
 
 function Write-ByokJsonAtomic {
     param([string]$Path, $Value)
     $dir = Split-Path -Parent $Path
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-    $tmp = "$Path.$PID.tmp"
-    $json = $Value | ConvertTo-Json -Depth 20
-    [System.IO.File]::WriteAllText($tmp, "$json`n", (New-Object System.Text.UTF8Encoding $false))
-    if (Test-Path $Path) { Remove-Item -LiteralPath $Path -Force }
-    Move-Item -LiteralPath $tmp -Destination $Path -Force
+    $lock = "$Path.lock"
+    $tmp = "$Path.$PID.$([Guid]::NewGuid().ToString('N')).tmp"
+    $replaceBackup = "$Path.$PID.$([Guid]::NewGuid().ToString('N')).replace-backup"
+    $deadline = [DateTime]::UtcNow.AddSeconds(3)
+    $lockStream = $null
+    while (-not $lockStream) {
+        try {
+            $lockStream = [System.IO.File]::Open($lock, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        } catch [System.IO.IOException] {
+            if (Test-Path -LiteralPath $lock) {
+                $age = [DateTime]::UtcNow - (Get-Item -LiteralPath $lock).LastWriteTimeUtc
+                if ($age.TotalSeconds -gt 30) { Remove-Item -LiteralPath $lock -Force; continue }
+            }
+            if ([DateTime]::UtcNow -ge $deadline) { throw "Timed out waiting for data lock '$lock'." }
+            Start-Sleep -Milliseconds 25
+        }
+    }
+    try {
+        $lockBytes = [Text.Encoding]::UTF8.GetBytes("$PID $([DateTime]::UtcNow.ToString('o'))`n")
+        $lockStream.Write($lockBytes, 0, $lockBytes.Length)
+        $lockStream.Flush($true)
+        $lockStream.Dispose(); $lockStream = $null
+
+        $json = ($Value | ConvertTo-Json -Depth 20) + "`n"
+        $bytes = (New-Object System.Text.UTF8Encoding $false).GetBytes($json)
+        $stream = New-Object System.IO.FileStream($tmp, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None, 4096, [System.IO.FileOptions]::WriteThrough)
+        try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
+        if (Test-Path -LiteralPath $Path) {
+            [System.IO.File]::Replace($tmp, $Path, $replaceBackup, $true)
+            Remove-Item -LiteralPath $replaceBackup -Force -ErrorAction SilentlyContinue
+        } else {
+            [System.IO.File]::Move($tmp, $Path)
+        }
+    } finally {
+        if ($lockStream) { $lockStream.Dispose() }
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $replaceBackup -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $lock -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Assert-ByokEnvMap {
+    param($Map, [string]$JsonPath)
+    if (-not $Map) { return }
+    foreach ($property in $Map.PSObject.Properties) {
+        if ($property.Name -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+            throw "Invalid provider config at $JsonPath.$($property.Name): invalid environment variable name."
+        }
+        if ($null -eq $property.Value -or ($property.Value -is [System.Collections.IEnumerable] -and $property.Value -isnot [string])) {
+            throw "Invalid provider config at $JsonPath.$($property.Name): template value must be scalar."
+        }
+    }
+}
+
+function Assert-ByokProviderConfig {
+    param($Config)
+    if (-not $Config -or $Config.version -ne 1) { throw 'Invalid provider config at $.version: must equal 1.' }
+    if (-not $Config.clis) { throw 'Invalid provider config at $.clis: at least one CLI is required.' }
+    if (-not $Config.providers) { throw 'Invalid provider config at $.providers: object is required.' }
+    foreach ($cliProperty in $Config.clis.PSObject.Properties) {
+        $id = $cliProperty.Name; $cli = $cliProperty.Value; $basePath = "$.clis.$id"
+        if ($id -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') { throw "Invalid provider config at ${basePath}: invalid CLI id." }
+        if ($cli.command -and "$($cli.command)" -notmatch '^[A-Za-z0-9._+\-\\/:]+$') { throw "Invalid provider config at $basePath.command: invalid executable." }
+        foreach ($arg in @($cli.args)) {
+            if ($null -eq $arg -or $arg -isnot [string]) { throw "Invalid provider config at $basePath.args: strings are required." }
+            if ($arg.Contains('{api_key}') -or $arg.Contains('${api_key}')) { throw "Invalid provider config at $basePath.args: API keys must use child environment variables, not process arguments." }
+        }
+        if ($cli.modelEnvName -and "$($cli.modelEnvName)" -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') { throw "Invalid provider config at $basePath.modelEnvName." }
+        Assert-ByokEnvMap $cli.environment "$basePath.environment"
+        Assert-ByokEnvMap $cli.settings "$basePath.settings"
+    }
+    foreach ($providerProperty in $Config.providers.PSObject.Properties) {
+        $id = $providerProperty.Name; $provider = $providerProperty.Value; $basePath = "$.providers.$id"
+        if ($id -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') { throw "Invalid provider config at ${basePath}: invalid provider id." }
+        if ($provider.baseUrl) {
+            $uri = $null
+            if (-not [Uri]::TryCreate("$($provider.baseUrl)", [UriKind]::Absolute, [ref]$uri) -or $uri.Scheme -notin @('http','https') -or $uri.UserInfo -or $uri.Query -or $uri.Fragment) {
+                throw "Invalid provider config at $basePath.baseUrl: absolute http(s) URL without credentials/query/fragment required."
+            }
+        }
+        foreach ($field in @('apiKeyEnv','apiKeyEnvNames','modelEnvNames')) {
+            foreach ($name in @($provider.$field)) {
+                if ($name -and "$name" -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') { throw "Invalid provider config at $basePath.${field}: invalid environment variable name." }
+            }
+        }
+        if ($provider.environment) {
+            foreach ($override in $provider.environment.PSObject.Properties) { Assert-ByokEnvMap $override.Value "$basePath.environment.$($override.Name)" }
+        }
+        Assert-ByokEnvMap $provider.settings "$basePath.settings"
+    }
+    return $Config
 }
 
 # --- provider config ----------------------------------------------------------
@@ -60,6 +154,7 @@ function Load-ByokProviderConfig {
     param([string]$DataDir = (Get-ByokDataDir))
     $configPath = Get-ByokConfigPath $DataDir
     $parsed = Read-ByokJson $configPath @{ version = 1; providers = @{} }
+    Assert-ByokProviderConfig $parsed | Out-Null
     $list = @()
     if ($parsed.providers) {
         foreach ($p in $parsed.providers.PSObject.Properties) {
@@ -122,8 +217,11 @@ function Update-ByokCacheForProvider {
 
     $now = (Get-Date).ToString('o')
     $existingModels = @()
-    if ($caches.Contains($ProviderId) -and $caches[$ProviderId].models) {
-        $existingModels = @($caches[$ProviderId].models)
+    $existingEntry = if ($caches.Contains($ProviderId)) { $caches[$ProviderId] } else { $null }
+    $existingApiPath = if ($existingEntry.apiPath) { $existingEntry.apiPath } else { $existingEntry.modelsApiPath }
+    $sameIdentity = $existingEntry -and "$($existingEntry.baseUrl)".TrimEnd('/') -eq "$BaseUrl".TrimEnd('/') -and "$existingApiPath" -eq "$ApiPath"
+    if ($sameIdentity -and $existingEntry.models) {
+        $existingModels = @($existingEntry.models)
     }
     $byId = [ordered]@{}
     $maxOrder = 0
@@ -150,11 +248,11 @@ function Update-ByokCacheForProvider {
     foreach ($m in $sorted) { $m.order = $idx; $idx += 1; $modelsList += ,$m }
 
     $caches[$ProviderId] = [ordered]@{
-        provider        = $ProviderId
-        baseUrl         = $BaseUrl
-        modelsApiPath   = $ApiPath
-        lastQueried     = $now
-        models          = $modelsList
+        providerId = $ProviderId
+        updatedAt  = $now
+        baseUrl    = "$BaseUrl".TrimEnd('/')
+        apiPath    = $ApiPath
+        models     = $modelsList
     }
     $newCache = [ordered]@{ version = 1; caches = $caches }
     Write-ByokCache $newCache $DataDir
@@ -189,19 +287,19 @@ function Get-ByokApiKeyEnvName {
 
 function Get-ByokModelCacheTtlSeconds {
     param($Provider)
-    if (-not $Provider) { return 0 }
+    if (-not $Provider) { return 3600 }
     if ($Provider.PSObject.Properties.Name -contains 'modelCacheTtlSeconds') {
         $raw = $Provider.modelCacheTtlSeconds
-        if ($null -eq $raw) { return 0 }
+        if ($null -eq $raw) { return 3600 }
         try {
             $seconds = [int]$raw
         } catch {
-            return 0
+            return 3600
         }
         if ($seconds -lt 0) { return 0 }
         return $seconds
     }
-    return 0
+    return 3600
 }
 
 function Get-ByokProviderCacheEntry {
@@ -223,7 +321,10 @@ function Get-ByokCachedModelIds {
     if (-not $entry -or -not $entry.models) { return @() }
     $ids = @()
     foreach ($model in @($entry.models)) {
-        if ($model -and $model.available -eq $true) {
+        if ($model -is [string]) {
+            $id = "$model".Trim()
+            if ($id) { $ids += $id }
+        } elseif ($model -and $model.available -ne $false) {
             $id = "$($model.id)".Trim()
             if ($id) { $ids += $id }
         }
@@ -232,18 +333,23 @@ function Get-ByokCachedModelIds {
 }
 
 function Test-ByokModelCacheFresh {
-    param([string]$ProviderId, $Provider, [string]$DataDir = (Get-ByokDataDir))
+    param([string]$ProviderId, $Provider, [string]$DataDir = (Get-ByokDataDir), [string]$BaseUrl, [string]$ApiPath = '/models')
     $ttl = Get-ByokModelCacheTtlSeconds $Provider
     if ($ttl -le 0) { return $false }
     $entry = Get-ByokProviderCacheEntry $ProviderId $DataDir
-    if (-not $entry -or -not $entry.lastQueried) { return $false }
+    $updatedAt = if ($entry.updatedAt) { $entry.updatedAt } else { $entry.lastQueried }
+    if (-not $entry -or -not $updatedAt) { return $false }
+    if ($BaseUrl) {
+        $entryApiPath = if ($entry.apiPath) { $entry.apiPath } else { $entry.modelsApiPath }
+        if ("$($entry.baseUrl)".TrimEnd('/') -ne "$BaseUrl".TrimEnd('/') -or "$entryApiPath" -ne "$ApiPath") { return $false }
+    }
     try {
-        $lastQueried = [DateTime]::Parse($entry.lastQueried)
+        $lastQueried = [DateTime]::Parse($updatedAt)
     } catch {
         return $false
     }
     $ageSeconds = [int]([DateTime]::UtcNow - $lastQueried.ToUniversalTime()).TotalSeconds
-    return ($ageSeconds -le $ttl)
+    return ($ageSeconds -ge 0 -and $ageSeconds -lt $ttl)
 }
 
 function Resolve-ByokChosenModel {
@@ -266,7 +372,7 @@ function Resolve-ByokChosenModel {
     }
 
     if ($AvailableModels.Count -gt 0) { return "$($AvailableModels[0])".Trim() }
-    return ''
+    return 'gpt-4o'
 }
 
 function Get-ByokCliEnvironmentMap {
@@ -511,9 +617,10 @@ function Add-ByokProvider {
     }
 
     $parsed.providers | Add-Member -NotePropertyName $id -NotePropertyValue $provider -Force
+    Assert-ByokProviderConfig $parsed | Out-Null
 
     # Always write into the data-dir config so future loads pick it up.
-    $targetPath = Join-Path $DataDir 'config\providers.json'
+    $targetPath = Join-Path $DataDir 'providers.json'
     $configDir = Split-Path -Parent $targetPath
     if (-not (Test-Path $configDir)) { New-Item -ItemType Directory -Force -Path $configDir | Out-Null }
     Write-ByokJsonAtomic $targetPath $parsed
@@ -522,10 +629,11 @@ function Add-ByokProvider {
 }
 
 function Get-ByokApiKeySource {
-    param([string]$EnvName, [bool]$FromPrompt)
+    param([string]$EnvName, [bool]$FromPrompt, [bool]$FromArgument, [bool]$HasKey)
     if ($FromPrompt) { return 'prompt' }
-    if ($EnvName) { return "environment:$EnvName" }
-    return 'prompt'
+    if ($FromArgument) { return 'argument' }
+    if ($HasKey -and $EnvName) { return "env:$EnvName" }
+    return 'none'
 }
 
 Export-ModuleMember -Function Get-ByokDataDir, Get-ByokConfigPath, Read-ByokJson, Write-ByokJsonAtomic,
@@ -534,4 +642,5 @@ Export-ModuleMember -Function Get-ByokDataDir, Get-ByokConfigPath, Read-ByokJson
     Resolve-ByokEnvValue, Get-ByokApiKeyEnvName, Get-ByokModelCacheTtlSeconds,
     Get-ByokProviderCacheEntry, Get-ByokCachedModelIds, Test-ByokModelCacheFresh,
     Resolve-ByokChosenModel, Get-ByokCliSupportStatus, Expand-ByokTemplateValue, Resolve-ByokCliArgs,
-    Build-ByokRuntimeEnvMap, Invoke-ByokModelFetch, Add-ByokProvider, Get-ByokApiKeySource
+    Build-ByokRuntimeEnvMap, Invoke-ByokModelFetch, Add-ByokProvider, Get-ByokApiKeySource,
+    Assert-ByokProviderConfig

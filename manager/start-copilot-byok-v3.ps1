@@ -19,9 +19,6 @@ param(
     [string]$Model,
     [switch]$DryRun,
     [switch]$Refresh,
-    [switch]$EmitEnv,
-    [ValidateSet('cmd', 'ps')][string]$EmitEnvFormat = 'cmd',
-    [string]$EnvFile,
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$LaunchArgs
 )
 
@@ -63,22 +60,6 @@ function Write-DefaultMenuItem {
     } else {
         Write-Host ("{0}. {1}" -f $Index, $Text)
     }
-}
-
-function Format-ByokCliArgsForShell {
-    param([string[]]$Values)
-    $parts = [System.Collections.Generic.List[string]]::new()
-    foreach ($arg in @($Values)) {
-        if ($null -eq $arg) { continue }
-        $text = [string]$arg
-        if ($text -match '[\s"]') {
-            $escaped = $text -replace '"', '""'
-            $parts.Add(('"{0}"' -f $escaped))
-        } else {
-            $parts.Add($text)
-        }
-    }
-    return [string]::Join(' ', $parts)
 }
 
 # Interactive flow that captures a new provider, writes it into providers.json,
@@ -142,14 +123,14 @@ try {
     if ($clis.Count -eq 0) { Write-Err 'No supported or partial CLIs were found.'; exit 1 }
 
     $selectedCli = $null
-    if ($clis.Count -eq 1) {
-        $selectedCli = $clis[0]
-    } elseif ($cliArg) {
+    if ($cliArg) {
         $selectedCli = $configuredClis | Where-Object { $_.id -eq $cliArg } | Select-Object -First 1
         if (-not $selectedCli) { Write-Err "Unknown CLI: $cliArg"; exit 1 }
         if ((Get-ByokCliSupportStatus $selectedCli) -eq 'unsupported') {
             Write-Err "CLI '$cliArg' is marked unsupported for the BYOK environment flow."; exit 1
         }
+    } elseif ($clis.Count -eq 1) {
+        $selectedCli = $clis[0]
     }
     if (-not $selectedCli) {
         $rememberedCliIndex = Get-SelectionIndex $clis $rememberedCliId
@@ -225,6 +206,7 @@ try {
     $keyEnvName = Get-ByokApiKeyEnvName $selected
     $envApiKey = Resolve-ByokEnvValue $(if ($selected.apiKeyEnvNames) { $selected.apiKeyEnvNames } else { $selected.apiKeyEnv })
     $fromPrompt = $false
+    $fromArgument = $PSBoundParameters.ContainsKey('ApiKey') -and -not [string]::IsNullOrWhiteSpace($ApiKey)
     $apiKey = if ($ApiKey) { $ApiKey }
               elseif ($envApiKey) { $envApiKey }
               else { '' }
@@ -235,12 +217,19 @@ try {
     $useCachedModels = $false
     if ($modelCacheTtlSeconds -gt 0) {
         $cachedModelIds = @(Get-ByokCachedModelIds $selected.id $dataDir)
-        $useCachedModels = $cachedModelIds.Count -gt 0 -and (Test-ByokModelCacheFresh $selected.id $selected $dataDir)
+        $useCachedModels = $cachedModelIds.Count -gt 0 -and (Test-ByokModelCacheFresh $selected.id $selected $dataDir $base $apiPath)
     }
 
     $modelIds = @()
     $promptedForApiKey = $false
-    if ($useCachedModels) {
+    if ($DryRun) {
+        $entry = Get-ByokProviderCacheEntry $selected.id $dataDir
+        $entryApiPath = if ($entry.apiPath) { $entry.apiPath } else { $entry.modelsApiPath }
+        $identityMatches = $entry -and "$($entry.baseUrl)".TrimEnd('/') -eq "$base".TrimEnd('/') -and "$entryApiPath" -eq "$apiPath"
+        $available = if ($identityMatches) { @($cachedModelIds) } else { @() }
+        $modelIds = @($available)
+        Write-Inf 'Dry run: network and cache updates were skipped.'
+    } elseif ($useCachedModels) {
         $modelIds = @($cachedModelIds)
         $available = @($cachedModelIds)
         Write-Inf "Using cached models for $($selected.id) (ttl=$modelCacheTtlSeconds sec)"
@@ -277,6 +266,7 @@ try {
     if ($LaunchArgs) { $resolvedLaunchArgs += @($LaunchArgs) }
 
     $envMap = Build-ByokRuntimeEnvMap $selected $base $chosenModel $apiKey $selected.id $selectedCli
+    $envMap['BYOK_CLI_HUB_DATA_DIR'] = $dataDir
 
     $state = [ordered]@{
         cliId           = $selectedCli.id
@@ -286,46 +276,17 @@ try {
         providerType    = if ($selected.type) { $selected.type } else { 'openai' }
         baseUrl         = $base
         model           = $chosenModel
-        apiKeySource    = Get-ByokApiKeySource $keyEnvName $fromPrompt
+        apiKeySource    = Get-ByokApiKeySource $keyEnvName $fromPrompt $fromArgument ([bool]$apiKey)
         updatedAt       = (Get-Date).ToString('o')
     }
-    Write-ByokState $state $dataDir
+    if (-not $DryRun) { Write-ByokState $state $dataDir }
 
     Write-Inf "Provider: $($selected.name)"
     Write-Inf "Model: $chosenModel"
-    Write-Inf ("API key: " + ('*' * [Math]::Max(8, $apiKey.Length)))
+    Write-Inf ("API key: " + $(if ($apiKey) { '[set]' } else { '[not set]' }))
 
-    if ($EmitEnv) {
-        foreach ($k in $envMap.Keys) {
-            $v = $envMap[$k]
-            if ($EmitEnvFormat -eq 'ps') { Write-Output ('$env:{0} = ''{1}''' -f $k, ($v -replace "'", "''")) }
-            else { Write-Output ('set "{0}={1}"' -f $k, ($v -replace '"', '""')) }
-        }
-        return
-    }
-
-    # -EnvFile: write set "KEY=value" lines for the calling shell (CMD) to `call`.
-    # Used by the BYOK CLI Hub CMD shim so env vars land in the CMD console
-    # (and persist there, so the API key is remembered on the next launch).
-    if ($EnvFile) {
-        $lines = @()
-        foreach ($k in $envMap.Keys) {
-            $v = [string]$envMap[$k]
-            $lines += ('set "{0}={1}"' -f $k, ($v -replace '"', '""'))
-        }
-        # Embed the selected CLI's command + args so the CMD shim can launch
-        # the right CLI without hardcoding copilot.
-        $cliCmd = if ($selectedCli.command) { $selectedCli.command } else { 'copilot' }
-        $cliArgsStr = Format-ByokCliArgsForShell $resolvedLaunchArgs
-        $lines += ('set "__BYOK_CLI_COMMAND={0}"' -f $cliCmd)
-        if ($cliArgsStr) { $lines += ('set "__BYOK_CLI_ARGS={0}"' -f $cliArgsStr) }
-        $dir = Split-Path -Parent $EnvFile
-        if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-        [System.IO.File]::WriteAllText($EnvFile, (($lines -join "`r`n") + "`r`n"), (New-Object System.Text.UTF8Encoding $false))
-        return
-    }
-
-    if ($DryRun -or $Refresh) { Write-Inf 'Dry run complete.'; return }
+    if ($DryRun) { Write-Inf 'Dry run complete.'; return }
+    if ($Refresh) { Write-Inf 'Model cache refresh complete.'; return }
 
     Write-Host 'Applying BYOK environment in the current session...' -ForegroundColor Cyan
     foreach ($k in $envMap.Keys) { Set-Item -Path "Env:$k" -Value $envMap[$k] }

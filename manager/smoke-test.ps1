@@ -35,6 +35,7 @@ try {
     $providers | ConvertTo-Json -Depth 20 | Set-Content -Path $providersPath -Encoding UTF8
 
     $cfg = Load-ByokProviderConfig $dataDir
+    if ($cfg.configPath -ne (Join-Path $dataDir 'providers.json')) { throw "config was not migrated to canonical root: $($cfg.configPath)" }
     if ($cfg.providers.Count -ne 1) { throw "expected 1 enabled provider, got $($cfg.providers.Count)" }
     if ($cfg.providers[0].id -ne 'alpha') { throw "expected alpha, got $($cfg.providers[0].id)" }
 
@@ -62,6 +63,9 @@ try {
     if ($chosen -ne 'm2') { throw "provider switch fallback mismatch: $chosen" }
     $cache = Read-ByokCache $dataDir
     if ($cache.caches.alpha.baseUrl -ne 'http://alpha/v1') { throw "cache baseUrl mismatch" }
+    if ($cache.caches.alpha.apiPath -ne '/models') { throw "canonical cache apiPath missing" }
+    if (-not $cache.caches.alpha.updatedAt) { throw "canonical cache updatedAt missing" }
+    if ($cache.caches.alpha.lastQueried -or $cache.caches.alpha.modelsApiPath) { throw "legacy cache field was written" }
     if ($cache.caches.alpha.models.Count -ne 2) { throw "cache models count mismatch" }
 
     $second = @(Update-ByokCacheForProvider 'alpha' 'http://alpha/v1' '/models' @('m2','m3') $dataDir)
@@ -112,6 +116,7 @@ try {
     if ($added.id -ne 'my-custom-llm') { throw "add provider id mismatch: $($added.id)" }
     if ($added.apiKeyEnvName -ne 'MY_CUSTOM_LLM_API_KEY') { throw "add provider env name mismatch: $($added.apiKeyEnvName)" }
     if (-not (Test-Path $added.configPath)) { throw "add provider config file not written" }
+    if ($added.configPath -ne (Join-Path $dataDir 'providers.json')) { throw "added provider used non-canonical config path" }
     $cfg3 = Load-ByokProviderConfig $dataDir
     $custom = ($cfg3.providers | Where-Object { $_.id -eq 'my-custom-llm' } | Select-Object -First 1)
     if (-not $custom) { throw "added provider not found after reload" }

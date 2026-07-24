@@ -8,7 +8,10 @@ import fs from 'node:fs';
 export function isExecutableInPath(command) {
   if (!command) return false;
   if (path.isAbsolute(command)) {
-    try { return fs.existsSync(command); } catch { return false; }
+    try {
+      fs.accessSync(command, process.platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK);
+      return fs.statSync(command).isFile();
+    } catch { return false; }
   }
 
   const PATH = process.env.PATH || '';
@@ -19,7 +22,8 @@ export function isExecutableInPath(command) {
     for (const ext of extensions) {
       const fullPath = path.join(dir, command + ext);
       try {
-        if (fs.existsSync(fullPath)) {
+        if (fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
+          if (process.platform !== 'win32') fs.accessSync(fullPath, fs.constants.X_OK);
           return true;
         }
       } catch {}
@@ -32,23 +36,21 @@ export function isExecutableInPath(command) {
  * Launches the selected CLI executable with resolved arguments and environment map.
  */
 export async function launchCli(command, args = [], envMap = {}, options = {}) {
-  const { dryRun = false, refresh = false } = options;
+  const { dryRun = false, sensitiveKeys = new Set() } = options;
 
-  if (dryRun || refresh) {
+  if (dryRun) {
     console.log('[DRY-RUN] Resolved CLI Command:', command);
     console.log('[DRY-RUN] Resolved Arguments:', args);
     console.log('[DRY-RUN] Environment Map (Redacted):');
     for (const [k, v] of Object.entries(envMap)) {
-      if (k.includes('KEY') || k.includes('TOKEN') || k.includes('SECRET')) {
-        console.log(`  ${k}: [SET (length: ${v ? String(v).length : 0}) redacting value]`);
+      if (sensitiveKeys.has(k)) {
+        console.log(`  ${k}: ${v ? '[set]' : '[not set]'}`);
       } else {
         console.log(`  ${k}: ${v}`);
       }
     }
-    if (dryRun) {
-      console.log('Dry run complete.');
-      return 0;
-    }
+    console.log('Dry run complete.');
+    return 0;
   }
 
   if (!isExecutableInPath(command)) {
@@ -66,26 +68,42 @@ export async function launchCli(command, args = [], envMap = {}, options = {}) {
       env: childEnv
     });
 
+    let settled = false;
     const sigHandler = (sig) => {
       if (child && !child.killed) {
         child.kill(sig);
       }
     };
 
-    process.on('SIGINT', () => sigHandler('SIGINT'));
-    process.on('SIGTERM', () => sigHandler('SIGTERM'));
-    process.on('SIGHUP', () => sigHandler('SIGHUP'));
+    const handlers = new Map([
+      ['SIGINT', () => sigHandler('SIGINT')],
+      ['SIGTERM', () => sigHandler('SIGTERM')],
+      ['SIGHUP', () => sigHandler('SIGHUP')]
+    ]);
+    for (const [signal, handler] of handlers) process.on(signal, handler);
+
+    const cleanup = () => {
+      for (const [signal, handler] of handlers) process.removeListener(signal, handler);
+    };
+
+    const finish = (code) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(code);
+    };
 
     child.on('error', (err) => {
       console.error(`Failed to launch child process '${command}':`, err.message);
-      resolve(1);
+      finish(1);
     });
 
     child.on('close', (code, signal) => {
       if (signal) {
-        resolve(128 + (signal === 'SIGINT' ? 2 : 15));
+        const signalOffsets = { SIGINT: 2, SIGTERM: 15, SIGHUP: 1 };
+        finish(128 + (signalOffsets[signal] || 1));
       } else {
-        resolve(code ?? 0);
+        finish(code ?? 0);
       }
     });
   });

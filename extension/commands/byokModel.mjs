@@ -1,15 +1,23 @@
-import { getDataDir, readCache, readState, writeState } from "../lib/shared.mjs";
+import { getDataDir, readCache, readState, updateState } from "../lib/shared.mjs";
 
 export async function runByokModelCommand(session, rawArgs = "") {
   const dataDir = getDataDir();
-  const state = readState(dataDir);
+  let state;
+  let cache;
+  try {
+    state = readState(dataDir);
+    cache = readCache(dataDir);
+  } catch (error) {
+    await session.log(error instanceof Error ? error.message : String(error), { level: "error" });
+    return;
+  }
   if (!state?.providerId) {
     await session.log("No provider state was found. Run the BYOK selector wrapper first.", { level: "error" });
     return;
   }
 
   const argument = rawArgs.trim().toLowerCase();
-  const cacheEntry = readCache(dataDir).caches?.[state.providerId];
+  const cacheEntry = cache.caches?.[state.providerId];
   const rawModels = cacheEntry?.models || [];
   const models = rawModels
     .filter((item) => (typeof item === "string" ? true : item?.available !== false))
@@ -43,6 +51,14 @@ export async function runByokModelCommand(session, rawArgs = "") {
     return;
   }
 
-  writeState({ ...state, model: selected, updatedAt: new Date().toISOString() }, dataDir);
+  try {
+    updateState(
+      (current) => ({ ...(current || state), model: selected, updatedAt: new Date().toISOString() }),
+      dataDir
+    );
+  } catch (error) {
+    await session.log(`Model changed, but state could not be saved: ${error instanceof Error ? error.message : String(error)}`, { level: "error" });
+    return;
+  }
   await session.log(`Selected model: ${selected}`, { level: "info" });
 }

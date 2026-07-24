@@ -1,8 +1,15 @@
 #!/usr/bin/env node
 
 import process from 'node:process';
-import path from 'node:path';
-import { getByokDataDir, readState, writeState, readCache } from './lib/state.mjs';
+import {
+  getByokDataDir,
+  readState,
+  writeState,
+  readCache,
+  updateCacheForProvider,
+  testModelCacheFresh,
+  cacheIdentityMatches
+} from './lib/state.mjs';
 import { loadProviderConfig, addProvider } from './lib/config.mjs';
 import {
   resolveCliArgs,
@@ -11,64 +18,13 @@ import {
   getApiKeyEnvName,
   getCliSupportStatus,
   resolveChosenModel,
-  getApiKeySource
+  getApiKeySource,
+  getSensitiveEnvKeys
 } from './lib/env.mjs';
+import { parseArgs, UsageError } from './lib/args.mjs';
 import { fetchModels } from './lib/http.mjs';
 import { readMaskedPrompt, readInput, selectMenuItem } from './lib/prompt.mjs';
 import { launchCli } from './lib/launcher.mjs';
-
-function parseArgs(argv) {
-  const options = {
-    cli: null,
-    provider: null,
-    baseUrl: null,
-    apiKey: null,
-    model: null,
-    refresh: false,
-    dryRun: false,
-    emitEnv: false,
-    selfCheck: false,
-    dataDir: null,
-    passthroughArgs: []
-  };
-
-  const passthroughIdx = argv.indexOf('--');
-  let mainArgs = argv;
-  if (passthroughIdx !== -1) {
-    mainArgs = argv.slice(0, passthroughIdx);
-    options.passthroughArgs = argv.slice(passthroughIdx + 1);
-  }
-
-  for (let i = 0; i < mainArgs.length; i++) {
-    const arg = mainArgs[i];
-    if (arg === '--cli' && i + 1 < mainArgs.length) {
-      options.cli = mainArgs[++i];
-    } else if (arg === '--provider' && i + 1 < mainArgs.length) {
-      options.provider = mainArgs[++i];
-    } else if (arg === '--base-url' && i + 1 < mainArgs.length) {
-      options.baseUrl = mainArgs[++i];
-    } else if (arg === '--api-key' && i + 1 < mainArgs.length) {
-      options.apiKey = mainArgs[++i];
-    } else if (arg === '--model' && i + 1 < mainArgs.length) {
-      options.model = mainArgs[++i];
-    } else if (arg === '--data-dir' && i + 1 < mainArgs.length) {
-      options.dataDir = mainArgs[++i];
-    } else if (arg === '--refresh') {
-      options.refresh = true;
-    } else if (arg === '--dry-run') {
-      options.dryRun = true;
-    } else if (arg === '--emit-env' || arg === '--export') {
-      options.emitEnv = true;
-    } else if (arg === '--self-check') {
-      options.selfCheck = true;
-    } else if (arg === '--help' || arg === '-h') {
-      printHelp();
-      process.exit(0);
-    }
-  }
-
-  return options;
-}
 
 function printHelp() {
   console.log(`
@@ -85,7 +41,6 @@ Options:
   --model ID        Select model ID
   --data-dir DIR    Override data directory
   --refresh         Refresh model cache from provider
-  --emit-env        Output export KEY="VALUE" lines for shell without launching
   --dry-run         Display resolved parameters & env map without launching
   --self-check      Run environment preflight checks
   --help, -h        Display this help message
@@ -157,6 +112,10 @@ async function invokeAddProviderFlow(selectedCli, dataDir) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  if (options.help) {
+    printHelp();
+    return;
+  }
   const dataDir = getByokDataDir(options.dataDir);
 
   if (options.selfCheck) {
@@ -164,7 +123,7 @@ async function main() {
     return;
   }
 
-  const config = loadProviderConfig(dataDir);
+    const config = loadProviderConfig(dataDir, { initialize: !options.dryRun });
   const state = readState(dataDir) || {};
 
   const rememberedCliId = state.cliId || null;
@@ -188,6 +147,10 @@ async function main() {
     selectedCli = config.clis.find(c => c.id === options.cli);
     if (!selectedCli) {
       console.error(`Error: Unknown CLI '${options.cli}'.`);
+      process.exit(1);
+    }
+    if (getCliSupportStatus(selectedCli) === 'unsupported') {
+      console.error(`Error: CLI '${options.cli}' is marked unsupported.`);
       process.exit(1);
     }
   } else if (clis.length === 1) {
@@ -256,8 +219,8 @@ async function main() {
   let apiKey = options.apiKey || envApiKey || '';
   let fromPrompt = false;
 
-  // Strict API key enforcement for providers requiring a key
-  if (!apiKey && selectedProvider.apiKeyRequired !== false) {
+  // A dry run reports key presence but never prompts or performs network I/O.
+  if (!options.dryRun && !apiKey && selectedProvider.apiKeyRequired !== false) {
     if (process.stdin.isTTY) {
       apiKey = await readMaskedPrompt(`API key for '${selectedProvider.name}': `);
       if (apiKey) {
@@ -276,16 +239,30 @@ async function main() {
   let availableModels = [];
   const ttl = selectedProvider.modelCacheTtlSeconds ?? 3600;
 
+  const apiPath = selectedProvider.modelsApi?.path || '/models';
   if (Array.isArray(selectedProvider.models) && selectedProvider.models.length > 0) {
-    availableModels = selectedProvider.models;
+    availableModels = selectedProvider.models
+      .filter(model => typeof model === 'string' || model?.available !== false)
+      .map(model => typeof model === 'string' ? model.trim() : String(model.id || '').trim())
+      .filter(Boolean);
   } else {
     const cacheEntry = readCache(dataDir)?.caches?.[selectedProvider.id];
-    const isFresh = cacheEntry && cacheEntry.updatedAt && (Date.now() - new Date(cacheEntry.updatedAt).getTime()) < (ttl * 1000);
+    const identityMatches = cacheIdentityMatches(cacheEntry, baseUrl, apiPath);
+    const cachedModels = identityMatches && Array.isArray(cacheEntry?.models)
+      ? cacheEntry.models.filter(model => model.available !== false).map(model => model.id)
+      : [];
+    const isFresh = testModelCacheFresh(
+      selectedProvider.id,
+      selectedProvider,
+      dataDir,
+      { baseUrl, apiPath }
+    );
 
-    if (isFresh && !options.refresh && Array.isArray(cacheEntry.models) && cacheEntry.models.length > 0) {
-      availableModels = cacheEntry.models
-        .filter(m => (typeof m === 'string' ? true : m?.available !== false))
-        .map(m => (typeof m === 'string' ? m : m.id));
+    if (options.dryRun) {
+      availableModels = cachedModels;
+      if (availableModels.length > 0) console.log('Dry run: using the matching cached model list without refreshing it.');
+    } else if (isFresh && !options.refresh && cachedModels.length > 0) {
+      availableModels = cachedModels;
       console.log(`Using cached models for ${selectedProvider.id} (ttl=${ttl}s)`);
     } else {
       console.log(`Fetching models from ${baseUrl}...`);
@@ -293,19 +270,25 @@ async function main() {
       try {
         fetchedModelIds = await fetchModels(selectedProvider, baseUrl, apiKey);
       } catch (err) {
-        console.error(`Error fetching models from ${baseUrl}: ${err.message}`);
-        process.exit(1);
+        if (!options.refresh && cachedModels.length > 0) {
+          availableModels = cachedModels;
+          console.warn(`Warning: model refresh failed; using stale cache for '${selectedProvider.id}': ${err.message}`);
+        } else {
+          console.error(`Error fetching models: ${err.message}`);
+          process.exit(1);
+        }
       }
 
-      if (fetchedModelIds.length === 0) {
+      if (availableModels.length === 0 && fetchedModelIds.length === 0) {
         console.error('Error: No models were returned by the provider.');
         process.exit(1);
       }
 
-      const { updateCacheForProvider } = await import('./lib/state.mjs');
-      const updatedList = updateCacheForProvider(selectedProvider.id, baseUrl, selectedProvider.modelsApi?.path || '/models', fetchedModelIds, dataDir);
-      availableModels = updatedList.map(m => m.id);
-      console.log(`Saved ${availableModels.length} models to models-cache.json`);
+      if (fetchedModelIds.length > 0) {
+        const updatedList = updateCacheForProvider(selectedProvider.id, baseUrl, apiPath, fetchedModelIds, dataDir);
+        availableModels = updatedList.filter(model => model.available !== false).map(model => model.id);
+        console.log(`Saved ${availableModels.length} models to models-cache.json`);
+      }
     }
   }
 
@@ -318,6 +301,8 @@ async function main() {
   const resolvedLaunchArgs = [...resolvedCliArgs, ...options.passthroughArgs];
 
   const envMap = buildRuntimeEnvMap(selectedProvider, baseUrl, chosenModel, apiKey, selectedProvider.id, selectedCli);
+  envMap.BYOK_CLI_HUB_DATA_DIR = dataDir;
+  const sensitiveKeys = getSensitiveEnvKeys(envMap, apiKey);
 
   // --- 6. Save State ------------------------------------------------------
   const newState = {
@@ -328,41 +313,38 @@ async function main() {
     providerType: selectedProvider.type || 'openai',
     baseUrl,
     model: chosenModel,
-    apiKeySource: getApiKeySource(keyEnvName, fromPrompt),
+    apiKeySource: getApiKeySource(keyEnvName, fromPrompt, Boolean(options.apiKey), apiKey),
     updatedAt: new Date().toISOString()
   };
-  writeState(newState, dataDir);
+  if (!options.dryRun) writeState(newState, dataDir);
 
-  // --- 7. Handle --emit-env mode or Log Environment Map ------------------
-  if (options.emitEnv) {
-    for (const [k, v] of Object.entries(envMap)) {
-      const escaped = String(v).replace(/"/g, '\\"');
-      console.log(`export ${k}="${escaped}"`);
-    }
-    process.exit(0);
-  }
-
-  console.log(`\n\x1b[36mApplied BYOK Environment Variables:\x1b[0m`);
+  // --- 7. Display a redacted environment plan -----------------------------
+  console.log(`\n\x1b[36mBYOK Environment Variables:\x1b[0m`);
   for (const [k, v] of Object.entries(envMap)) {
-    if (k.includes('KEY') || k.includes('TOKEN') || k.includes('SECRET')) {
-      console.log(`  export ${k}="${apiKey ? '*'.repeat(Math.max(8, apiKey.length)) : '[not set]'}"`);
+    if (sensitiveKeys.has(k)) {
+      console.log(`  ${k}=${v ? '[set]' : '[not set]'}`);
     } else {
-      console.log(`  export ${k}="${v}"`);
+      console.log(`  ${k}=${v}`);
     }
   }
   console.log('');
+
+  if (options.refresh) {
+    console.log('Model cache refresh complete.');
+    return;
+  }
 
   // --- 8. Launch CLI ------------------------------------------------------
   const command = selectedCli.command || 'copilot';
   const exitCode = await launchCli(command, resolvedLaunchArgs, envMap, {
     dryRun: options.dryRun,
-    refresh: options.refresh
+    sensitiveKeys
   });
 
   process.exit(exitCode);
 }
 
 main().catch(err => {
-  console.error('Unhandled Manager Error:', err.message);
-  process.exit(1);
+  console.error(`${err instanceof UsageError ? 'Usage error' : 'Manager error'}: ${err.message}`);
+  process.exit(err.exitCode || 1);
 });

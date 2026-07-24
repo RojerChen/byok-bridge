@@ -4,12 +4,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
-import { getByokDataDir, readState, writeState, readCache, writeCache, updateCacheForProvider, getCachedModelIds, testModelCacheFresh } from './lib/state.mjs';
-import { loadProviderConfig, addProvider, normalizeConfig } from './lib/config.mjs';
-import { expandTemplateValue, resolveCliArgs, buildRuntimeEnvMap, resolveChosenModel } from './lib/env.mjs';
+import { getByokDataDir, readState, writeState, readCache, writeCache, writeJsonAtomic, updateCacheForProvider, getCachedModelIds, testModelCacheFresh } from './lib/state.mjs';
+import { loadProviderConfig, addProvider, normalizeConfig, validateConfig, ConfigValidationError } from './lib/config.mjs';
+import { expandTemplateValue, resolveCliArgs, buildRuntimeEnvMap, resolveChosenModel, getSensitiveEnvKeys } from './lib/env.mjs';
 import { fetchModels } from './lib/http.mjs';
 import { launchCli } from './lib/launcher.mjs';
+import { parseArgs, UsageError } from './lib/args.mjs';
+import { readState as readExtensionState, updateState as updateExtensionState } from '../extension/lib/shared.mjs';
 
 describe('BYOK CLI Hub Node Manager Unit & Integration Tests', () => {
   let tmpDir;
@@ -169,5 +173,145 @@ describe('BYOK CLI Hub Node Manager Unit & Integration Tests', () => {
   test('Launcher dry-run mode', async () => {
     const exitCode = await launchCli('node', ['--version'], { TEST_ENV: '123' }, { dryRun: true });
     assert.equal(exitCode, 0);
+  });
+
+  test('Strict argument parser rejects unknown, missing, duplicate, and unsafe emit options', () => {
+    assert.throws(() => parseArgs(['--api-key', '--dry-run']), UsageError);
+    assert.throws(() => parseArgs(['--wat']), UsageError);
+    assert.throws(() => parseArgs(['--emit-env']), UsageError);
+    assert.throws(() => parseArgs(['--model', 'a', '--model', 'b']), UsageError);
+    assert.deepEqual(parseArgs(['--cli', 'copilot', '--', '--verbose']).passthroughArgs, ['--verbose']);
+  });
+
+  test('Config validation reports JSON paths and preserves a damaged user config', () => {
+    const invalid = {
+      version: 1,
+      clis: { copilot: { command: 'copilot', environment: { 'BAD-NAME': '{api_key}' } } },
+      providers: {}
+    };
+    assert.throws(() => validateConfig(invalid), (error) => {
+      assert.ok(error instanceof ConfigValidationError);
+      assert.match(error.message, /BAD-NAME/);
+      return true;
+    });
+    assert.throws(() => validateConfig({
+      version: 1,
+      clis: { unsafe: { command: 'tool', args: ['--token', '{api_key}'] } },
+      providers: {}
+    }), /process arguments/);
+
+    const configPath = path.join(tmpDir, 'providers.json');
+    fs.writeFileSync(configPath, '{ damaged json', 'utf8');
+    assert.throws(() => loadProviderConfig(tmpDir), /Invalid JSON/);
+    assert.equal(fs.readFileSync(configPath, 'utf8'), '{ damaged json');
+  });
+
+  test('Cache freshness is scoped to endpoint identity and migrates legacy field names', () => {
+    updateCacheForProvider('alpha', 'https://one.example/v1', '/models', ['m1'], tmpDir);
+    const provider = { modelCacheTtlSeconds: 3600 };
+    assert.equal(testModelCacheFresh('alpha', provider, tmpDir, {
+      baseUrl: 'https://one.example/v1', apiPath: '/models'
+    }), true);
+    assert.equal(testModelCacheFresh('alpha', provider, tmpDir, {
+      baseUrl: 'https://two.example/v1', apiPath: '/models'
+    }), false);
+
+    writeJsonAtomic(path.join(tmpDir, 'models-cache.json'), {
+      version: 1,
+      caches: {
+        legacy: {
+          lastQueried: new Date().toISOString(),
+          baseUrl: 'https://legacy.example/v1',
+          modelsApiPath: '/legacy-models',
+          models: [{ id: 'legacy-model', available: true }]
+        }
+      }
+    });
+    const migrated = readCache(tmpDir).caches.legacy;
+    assert.ok(migrated.updatedAt);
+    assert.equal(migrated.apiPath, '/legacy-models');
+  });
+
+  test('Secret redaction follows API-key-derived values instead of variable names', () => {
+    const map = buildRuntimeEnvMap(
+      { environment: { copilot: { AUTH: 'Bearer {api_key}', visible: '{model}' } } },
+      'https://example.test/v1',
+      'm1',
+      'super-secret',
+      'p1',
+      { id: 'copilot', environment: {} }
+    );
+    const sensitive = getSensitiveEnvKeys(map, 'super-secret');
+    assert.equal(sensitive.has('AUTH'), true);
+    assert.equal(sensitive.has('visible'), false);
+  });
+
+  test('Manager dry-run performs no persistent write and does not support shell env output', () => {
+    const config = {
+      version: 1,
+      clis: {
+        test: {
+          command: 'node',
+          args: [],
+          modelEnvName: 'TEST_MODEL',
+          environment: { TEST_MODEL: '{model}' }
+        }
+      },
+      providers: {
+        static: {
+          enabled: true,
+          baseUrl: 'https://example.test/v1',
+          apiKeyRequired: false,
+          models: ['model-a'],
+          environment: {}
+        }
+      }
+    };
+    writeJsonAtomic(path.join(tmpDir, 'providers.json'), config);
+    const managerPath = fileURLToPath(new URL('./manager.mjs', import.meta.url));
+    const result = spawnSync(process.execPath, [
+      managerPath,
+      '--data-dir', tmpDir,
+      '--cli', 'test',
+      '--provider', 'static',
+      '--dry-run'
+    ], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(fs.existsSync(path.join(tmpDir, 'state.json')), false);
+    assert.equal(fs.existsSync(path.join(tmpDir, 'models-cache.json')), false);
+
+    const rejected = spawnSync(process.execPath, [managerPath, '--emit-env'], { encoding: 'utf8' });
+    assert.equal(rejected.status, 2);
+    assert.match(rejected.stderr, /Unknown option/);
+  });
+
+  test('HTTP response reader enforces a body-size limit', async () => {
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ data: [{ id: 'x'.repeat(200) }] }));
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const port = server.address().port;
+      await assert.rejects(
+        fetchModels({ modelsApi: { path: '/models' } }, `http://127.0.0.1:${port}`, '', 1000, 32),
+        /exceeds/
+      );
+    } finally {
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
+
+  test('Extension performs a locked state merge and preserves damaged state', () => {
+    writeState({ providerId: 'alpha', providerName: 'Alpha', model: 'old' }, tmpDir);
+    updateExtensionState(current => ({ ...current, model: 'new' }), tmpDir);
+    assert.deepEqual(readExtensionState(tmpDir), {
+      providerId: 'alpha', providerName: 'Alpha', model: 'new'
+    });
+
+    const statePath = path.join(tmpDir, 'state.json');
+    fs.writeFileSync(statePath, '{ damaged', 'utf8');
+    assert.throws(() => updateExtensionState(current => current, tmpDir), /Invalid or unreadable/);
+    assert.equal(fs.readFileSync(statePath, 'utf8'), '{ damaged');
   });
 });

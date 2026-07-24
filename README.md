@@ -1,124 +1,124 @@
 # BYOK CLI Hub
 
-BYOK CLI Hub lets you choose a provider and model when launching an AI CLI, and applies the matching environment variables to the current CMD window.
+BYOK CLI Hub selects a provider and model, builds a configuration-driven environment, and launches an AI CLI as a child process. Provider credentials are passed directly to that child process; they are not written to config/state/cache files or persisted in the caller's shell.
 
 Current version: `0.0.1`
 
 ## Supported CLIs
 
-Current support status:
-
 | CLI | Status | Notes |
 | --- | --- | --- |
-| Copilot CLI | Supported (experimental) | Verified with GitHub Copilot CLI 1.0.73 |
-| Gemini CLI | Not supported | Not included in the integration scope |
-| Codex CLI | Not supported | Limited by the current execution environment |
+| GitHub Copilot CLI | Supported (experimental) | Verified with Copilot CLI 1.0.73 |
+| Gemini CLI | Not supported | Not included in the current integration scope |
+| Codex CLI | Not supported | Not included in the current integration scope |
 
-The launcher uses Copilot CLI's experimental extension API. Start Copilot with
-the bundled `--experimental` option, and expect that a future Copilot CLI update
-may require a compatibility update in this project. See GitHub's
-[Copilot CLI extension documentation](https://docs.github.com/en/enterprise-cloud@latest/copilot/concepts/agents/copilot-cli/about-cli-extensions)
-for the current feature status.
-
-If the environment or integration targets change later, this list will be updated.
+The optional Copilot extension uses an experimental API and may need updates when Copilot CLI changes.
 
 ## Prerequisites
 
-Install the following first:
+Windows:
 
-- Windows 10/11
-- PowerShell 5.1 or later
-- GitHub Copilot CLI in the `PATH` for CMD
+- Windows 10/11 and PowerShell 5.1 or later.
+- GitHub Copilot CLI in `PATH`.
 
-GitHub Copilot CLI 1.0.73 is the currently verified version. Other versions may
-work, but should be treated as unverified because the extension API remains
-experimental.
+Linux / WSL2:
 
-The provider must expose an OpenAI-compatible `/models` API. The API key can come from an environment variable or be entered at startup.
+- Bash, `realpath`, and Node.js 22 or later.
+- GitHub Copilot CLI in `PATH`.
+
+Providers normally expose an OpenAI-compatible `/models` API. API keys should be supplied through environment variables or the secure interactive prompt, never stored in `providers.json`.
 
 ## Installation
 
-Run this in the project directory:
+### Windows
+
+Run in CMD:
 
 ```bat
-bin\install.cmd
+bin\win\install.cmd
 ```
 
-The installer copies files to:
+The application and mutable user data are separate:
 
 ```text
-%USERPROFILE%\.byok-cli-hub\
+Application: %LOCALAPPDATA%\byok-cli-hub\app\
+User data:  %USERPROFILE%\.byok-cli-hub\
 ```
 
-That directory includes:
+The installer stages and smoke-tests a complete application snapshot before switching it into place. An existing `providers.json` is preserved. The application directory is added to the user `PATH` unless `BYOK_CLI_HUB_SKIP_PATH_UPDATE=1` or `-SkipPathUpdate` is supplied.
 
-- `run.cmd`: launch entry point
-- `manager\`: startup and provider management scripts
-- `config\providers.example.json`: example configuration
-- `state.json`, `models-cache.json`: runtime state and model cache generated after execution
-
-Re-running the installer updates the bundled scripts and
-`providers.example.json`, but preserves an existing `providers.json`. On the
-first installation only, `providers.json` is initialized from the example.
-
-The installer also adds `%USERPROFILE%\.byok-cli-hub` to the current user's
-`PATH` and installs a `byok-cli-hub.cmd` command shim. Open a new terminal after
-the first installation if the command is not immediately available.
-
-To install without changing the user `PATH`, set
-`BYOK_CLI_HUB_SKIP_PATH_UPDATE=1` before running the installer. The full-path
-launcher remains available in that mode.
-
-If the Copilot extension is installed, it will be placed here:
-
-```text
-%USERPROFILE%\.copilot\extensions\byok-cli-hub-copilot\
-```
-
-### Which `run.cmd` should I use?
-
-After installation, use the installed launcher:
+The Copilot extension is opt-in:
 
 ```bat
-byok-cli-hub
+bin\win\install.cmd -WithExtension
 ```
 
-This is a local copy created by `install.cmd`; it does not call or download a
-remote script.
-
-The repository contains another launcher at `bin\run.cmd`. It is intended for
-development and executes the manager scripts directly from the current source
-tree. The installed launcher instead executes the snapshot copied under
-`%USERPROFILE%\.byok-cli-hub\`, so it continues to work if the repository is
-moved or deleted.
-
-Both launchers use the same user configuration, state, and model cache under
-`%USERPROFILE%\.byok-cli-hub\`. Avoid switching between them while developing:
-the source manager may be newer than the installed Copilot extension. Re-run
-`bin\install.cmd` after updating the repository to synchronize the installed
-manager, launcher, example configuration, and extension.
-
-If `byok-cli-hub` is not found after opening a new terminal, use the full-path
-fallback:
+To adopt a recognizable extension from the pre-manifest installer, inspect it first and then run:
 
 ```bat
-call "%USERPROFILE%\.byok-cli-hub\run.cmd"
+bin\win\install.cmd -WithExtension -AdoptLegacy
 ```
 
-## Provider setup
+### Linux / WSL2
 
-The installer creates the following file on first installation. Edit it to add
-your providers:
+Run in Bash:
+
+```bash
+bash bin/linux/install.sh
+# Optional Copilot extension:
+bash bin/linux/install.sh --with-extension
+```
+
+Default locations:
+
+| Item | Default path |
+| --- | --- |
+| Application snapshot | `${XDG_DATA_HOME:-$HOME/.local/share}/byok-cli-hub` |
+| User data | `$HOME/.byok-cli-hub` |
+| Command shim | `$HOME/.local/bin/byok-cli-hub` |
+| Optional extension | `${COPILOT_HOME:-$HOME/.copilot}/extensions/byok-cli-hub-copilot` |
+
+Custom paths must be absolute, safe, and non-overlapping:
+
+```bash
+bash bin/linux/install.sh \
+  --install-dir /opt/byok-cli-hub \
+  --data-dir "$HOME/.config/byok-cli-hub" \
+  --bin-dir "$HOME/.local/bin"
+```
+
+The resolved data directory is recorded in the managed install manifest and exported by the generated shim as `BYOK_CLI_HUB_DATA_DIR`, so the Manager and extension read the same state/cache.
+
+Use `--check` to validate prerequisites and paths without writing files. Upgrading a recognizable installation made before ownership manifests requires the explicit `--adopt-legacy` option.
+
+## Provider configuration
+
+Both platforms use this canonical user config path:
 
 ```text
-%USERPROFILE%\.byok-cli-hub\config\providers.json
+<data-dir>/providers.json
 ```
 
-The minimal provider configuration looks like this:
+Defaults are `%USERPROFILE%\.byok-cli-hub\providers.json` on Windows and `$HOME/.byok-cli-hub/providers.json` on Linux/WSL. A legacy Windows `config/providers.json` is migrated to the canonical location and preserved.
+
+The installed example contains the full schema. A provider entry resembles:
 
 ```json
 {
   "version": 1,
+  "clis": {
+    "copilot": {
+      "name": "GitHub Copilot CLI",
+      "command": "copilot",
+      "args": ["--experimental"],
+      "modelEnvName": "COPILOT_MODEL",
+      "environment": {
+        "COPILOT_PROVIDER_BASE_URL": "{url}",
+        "COPILOT_PROVIDER_API_KEY": "{api_key}",
+        "COPILOT_MODEL": "{model}"
+      }
+    }
+  },
   "providers": {
     "my-provider": {
       "name": "My Provider",
@@ -127,8 +127,6 @@ The minimal provider configuration looks like this:
       "baseUrl": "https://api.example.com/v1",
       "apiKeyEnv": ["MY_PROVIDER_API_KEY"],
       "modelEnvNames": ["COPILOT_MODEL"],
-      "apiKeyHeader": "Authorization",
-      "apiKeyPrefix": "Bearer ",
       "modelsApi": {
         "path": "/models",
         "itemsPath": "data",
@@ -140,79 +138,94 @@ The minimal provider configuration looks like this:
 }
 ```
 
-Do not put real API keys into `providers.json`. Set them through an environment variable instead:
+Set the key outside the file:
 
 ```bat
 set "MY_PROVIDER_API_KEY=your-api-key"
 ```
 
-If no API key is found, you will be prompted to enter one at startup.
+```bash
+export MY_PROVIDER_API_KEY='your-api-key'
+```
 
-## Distribution
-
-BYOK CLI Hub is distributed as a source-based Windows utility. It combines
-PowerShell management scripts with a Node.js Copilot CLI extension and is not
-published as an npm or NuGet package. The `package.json` file remains private
-and is used only for project metadata and local scripts.
+Invalid JSON, IDs, environment variable names, executable fragments, argument types, headers, or base URL schemes are rejected with a JSON path. `{api_key}` is forbidden in CLI arguments and may only be used in child environment templates. A damaged user config is not silently replaced.
 
 ## Launching
 
-After installation, run the recommended local installed launcher in CMD:
+After installation:
 
-```bat
+```text
 byok-cli-hub
 ```
 
-The startup flow will ask you to choose:
-
-1. CLI
-2. Provider
-3. Model
-4. API key, if it is not already present in environment variables
-
-You can also pass options directly:
+Windows options use PowerShell syntax:
 
 ```bat
 byok-cli-hub -Cli copilot -Provider my-provider -Model my-model
+byok-cli-hub -Provider my-provider -DryRun
+byok-cli-hub -Provider my-provider -Refresh
 ```
 
-The first launch will call the provider's `/models` API and cache the result in `models-cache.json`.
+Linux / WSL options use GNU-style long names:
+
+```bash
+byok-cli-hub --cli copilot --provider my-provider --model my-model
+byok-cli-hub --provider my-provider --dry-run
+byok-cli-hub --provider my-provider --refresh
+byok-cli-hub --provider my-provider -- --additional-cli-argument
+```
+
+`--dry-run` / `-DryRun` does not fetch models, update cache/state, or launch a child. It prints a redacted execution plan. Refresh updates cache/state and returns without launching the CLI.
+
+There is intentionally no shell `eval`/`source` export mode. Secrets are passed directly through the child process environment and redacted as `[set]` in output.
 
 ## Switching models in Copilot
 
-After installing the extension, run this inside Copilot CLI:
+When the optional extension is installed, use:
 
 ```text
 /model_byok
-```
-
-To view the current provider and model:
-
-```text
 /model_byok info
 ```
 
-## Refreshing models
-
-To update the model cache without launching the CLI:
-
-```powershell
-& "$env:USERPROFILE\.byok-cli-hub\manager\refresh-byok-models-v3.ps1" -All
-```
+The extension uses `BYOK_CLI_HUB_DATA_DIR` and locked atomic state updates. If the shared JSON is damaged, it reports the error instead of overwriting the file.
 
 ## Removal
 
-First remove the installation directory from the user `PATH`:
+### Windows
 
-```powershell
-& "$env:USERPROFILE\.byok-cli-hub\manager\update-user-path.ps1" -Directory "$env:USERPROFILE\.byok-cli-hub" -Remove
+From the repository or installed application directory:
+
+```bat
+bin\win\uninstall.cmd
 ```
 
-Then delete the following directories to remove BYOK CLI Hub data and settings:
+The default removes the managed application, PATH entry, and manifest-owned extension while preserving `%USERPROFILE%\.byok-cli-hub`. To delete user config/state/cache too:
+
+```bat
+bin\win\uninstall.cmd -PurgeData
+```
+
+Use `-Yes` only for an intentional non-interactive purge.
+
+### Linux / WSL2
+
+```bash
+bash bin/linux/uninstall.sh
+bash bin/linux/uninstall.sh --purge-data
+# Non-interactive intentional purge:
+bash bin/linux/uninstall.sh --purge-data --yes
+```
+
+The uninstaller reads the managed manifest, removes only owned shim/extension paths, and preserves user data by default. A pre-manifest install requires `--force-legacy` and recognizable BYOK CLI Hub files.
+
+Neither uninstaller removes GitHub Copilot CLI or any other separately installed AI CLI.
+
+## Development and verification
 
 ```text
-%USERPROFILE%\.byok-cli-hub\
-%USERPROFILE%\.copilot\extensions\byok-cli-hub-copilot\
+npm test
+npm run smoke
 ```
 
-This does not remove any separately installed Copilot CLI, Aider, or other AI CLIs.
+The Node tests cover config validation, damaged-file preservation, state/cache writes, endpoint-scoped cache freshness, HTTP limits, strict arguments, redaction, dry-run side effects, and launching. The PowerShell smoke test exercises the canonical Windows data contract.

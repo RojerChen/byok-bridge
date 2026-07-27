@@ -3,6 +3,13 @@
 const DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 
+export function getSafeModelFetchErrorMessage(error, apiKey = '') {
+  const fallback = 'Model fetch failed.';
+  if (!error || typeof error.message !== 'string' || !error.message) return fallback;
+  if (typeof apiKey === 'string' && apiKey && error.message.includes(apiKey)) return fallback;
+  return error.message;
+}
+
 function getValueByPath(object, pathString) {
   if (!object || !pathString) return object;
   let current = object;
@@ -85,7 +92,13 @@ export async function fetchModels(
   if (!HEADER_NAME_PATTERN.test(headerName)) throw new Error('Configured API key header name is invalid.');
   const prefix = provider?.modelsApi?.apiKeyPrefix ?? provider?.apiKeyPrefix ?? 'Bearer ';
   const headers = { Accept: 'application/json' };
-  if (apiKey) headers[headerName] = `${prefix}${apiKey}`;
+  if (apiKey) {
+    const headerValue = `${prefix}${apiKey}`;
+    if (/[\u0000-\u001f\u007f]/.test(headerValue)) {
+      throw new Error('API key or prefix contains invalid control characters.');
+    }
+    headers[headerName] = headerValue;
+  }
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);

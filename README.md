@@ -162,7 +162,9 @@ set "MY_PROVIDER_API_KEY=your-api-key"
 export MY_PROVIDER_API_KEY='your-api-key'
 ```
 
-Invalid JSON, IDs, environment variable names, executable fragments, argument types, headers/prefixes, or base URL schemes are rejected with a JSON path. `modelsApi.path` must not contain control characters, a query (`?`), or a fragment (`#`). Node and PowerShell apply the same acceptance contract for these fields. `{api_key}` is forbidden in CLI arguments and may only be used in child environment templates. A damaged user config is not silently replaced.
+Invalid JSON, IDs, environment variable names, executable fragments, argument types, headers/prefixes, or base URL schemes are rejected with a JSON path. `version` must be the JSON number `1`; environment and settings templates accept only string, number, or boolean scalar values. On Windows, command paths may be a simple executable name, a fully qualified drive-rooted path, or a UNC path; drive-relative values such as `C:tools\cli.exe` are rejected.
+
+`apiKeyPrefix`, `modelsApi.apiKeyPrefix`, and the final prefix-plus-key HTTP header value reject C0/DEL control characters, preventing header injection. Errors that could contain an API key are replaced with a generic message. `modelsApi.path` must not contain control characters, a query (`?`), or a fragment (`#`). Node and PowerShell apply and directly cross-check the same acceptance contract for validated fields. Unknown fields are currently preserved/ignored for forward compatibility. `{api_key}` is forbidden in CLI arguments and may only be used in child environment templates. A damaged user config is not silently replaced.
 
 ## Launching
 
@@ -255,6 +257,8 @@ npm run test:linux-installer
 npm run test:all:linux
 ```
 
-`npm test` is platform-aware: Windows runs Node, PowerShell smoke/HTTP, and Windows installer suites; Linux runs Node and Linux installer suites. The Windows and Ubuntu jobs in `.github/workflows/test.yml` run this same entry point in CI.
+`npm test` is platform-aware: Windows runs Node, PowerShell smoke/HTTP, and Windows installer suites; Linux runs Node and Linux installer suites. A current Windows run contains 20 Node/cross-runtime assertions in addition to the PowerShell and installer suites. The Windows and Ubuntu jobs in `.github/workflows/test.yml` run this same entry point in CI.
 
-The tests cover the shared Node/PowerShell config contract, damaged-file preservation, endpoint-scoped cache freshness, bounded HTTP reads and stalled-body deadlines, empty model arrays, strict arguments, redaction, side-effect-free dry-run, active and abandoned cross-runtime locks, Windows `0.0.1` migration and rollback, managed-path relocation guards, and Windows/Linux data-aware installation transactions.
+The tests cover the shared Node/PowerShell config contract (including strict scalar types and Windows command-path variants), damaged-file preservation, endpoint-scoped cache freshness, bounded HTTP reads and stalled-body deadlines, empty model arrays, header-injection rejection and API-key-safe errors, strict arguments, redaction, side-effect-free dry-run, active and abandoned cross-runtime locks, Windows `0.0.1` migration and rollback, managed-path relocation guards, and Windows/Linux data-aware installation transactions. Linux failure injection explicitly verifies example-backup copy failure plus marker/config `chmod` failure using byte-level SHA-256 data-tree snapshots.
+
+The completed `0.0.2` review and remediation record is in [`doc/improve_0.0.2.md`](doc/improve_0.0.2.md).

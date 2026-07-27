@@ -10,6 +10,7 @@ const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const COMMAND_PATTERN = /^[A-Za-z0-9._+-]+$/;
 const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 const MODELS_API_PATH_FORBIDDEN_PATTERN = /[\u0000-\u001f\u007f?#]/;
+const CONTROL_CHAR_PATTERN = /[\u0000-\u001f\u007f]/;
 
 export class ConfigValidationError extends Error {
   constructor(jsonPath, message) {
@@ -114,14 +115,27 @@ function validateProvider(provider, jsonPath) {
       && (typeof provider.apiKeyHeader !== 'string' || !HEADER_NAME_PATTERN.test(provider.apiKeyHeader))) {
     fail(`${jsonPath}.apiKeyHeader`, 'is not a valid HTTP header name.');
   }
-  if (provider.apiKeyPrefix !== undefined && typeof provider.apiKeyPrefix !== 'string') {
-    fail(`${jsonPath}.apiKeyPrefix`, 'must be a string.');
+  if (provider.apiKeyPrefix !== undefined) {
+    if (typeof provider.apiKeyPrefix !== 'string') {
+      fail(`${jsonPath}.apiKeyPrefix`, 'must be a string.');
+    }
+    if (CONTROL_CHAR_PATTERN.test(provider.apiKeyPrefix)) {
+      fail(`${jsonPath}.apiKeyPrefix`, 'must not contain control characters.');
+    }
   }
   if (provider.modelsApi !== undefined) {
     if (!isRecord(provider.modelsApi)) fail(`${jsonPath}.modelsApi`, 'must be an object.');
-    for (const property of ['path', 'itemsPath', 'idPath', 'apiKeyPrefix']) {
+    for (const property of ['path', 'itemsPath', 'idPath']) {
       if (provider.modelsApi[property] !== undefined && typeof provider.modelsApi[property] !== 'string') {
         fail(`${jsonPath}.modelsApi.${property}`, 'must be a string.');
+      }
+    }
+    if (provider.modelsApi.apiKeyPrefix !== undefined) {
+      if (typeof provider.modelsApi.apiKeyPrefix !== 'string') {
+        fail(`${jsonPath}.modelsApi.apiKeyPrefix`, 'must be a string.');
+      }
+      if (CONTROL_CHAR_PATTERN.test(provider.modelsApi.apiKeyPrefix)) {
+        fail(`${jsonPath}.modelsApi.apiKeyPrefix`, 'must not contain control characters.');
       }
     }
     if (MODELS_API_PATH_FORBIDDEN_PATTERN.test(provider.modelsApi.path || '')) {

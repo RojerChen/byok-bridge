@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { getByokDataDir, readState, writeState, readCache, writeCache, writeJsonAtomic, updateCacheForProvider, getCachedModelIds, testModelCacheFresh } from './lib/state.mjs';
 import { loadProviderConfig, addProvider, normalizeConfig, validateConfig, ConfigValidationError } from './lib/config.mjs';
 import { expandTemplateValue, resolveCliArgs, buildRuntimeEnvMap, resolveChosenModel, getSensitiveEnvKeys } from './lib/env.mjs';
-import { fetchModels } from './lib/http.mjs';
+import { fetchModels, getSafeModelFetchErrorMessage } from './lib/http.mjs';
 import { launchCli } from './lib/launcher.mjs';
 import { parseArgs, UsageError } from './lib/args.mjs';
 import { readState as readExtensionState, updateState as updateExtensionState } from '../extension/lib/shared.mjs';
@@ -168,6 +168,56 @@ describe('BYOK CLI Hub Node Manager Unit & Integration Tests', () => {
     assert.deepEqual(models, ['mock-model-1', 'mock-model-2']);
 
     await new Promise((resolve) => server.close(resolve));
+  });
+
+  test('HTTP header values reject injection without leaking API keys', async () => {
+    const baseUrl = 'http://127.0.0.1:1/v1';
+    const cases = [
+      {
+        name: 'provider prefix',
+        provider: {
+          apiKeyPrefix: 'Bearer legit\r\nX-Injected: yes\r\nAnother: ',
+          modelsApi: { path: '/models' }
+        },
+        apiKey: 'PROVIDER_PREFIX_TEST_KEY'
+      },
+      {
+        name: 'models API prefix',
+        provider: {
+          apiKeyPrefix: 'Bearer ',
+          modelsApi: { path: '/models', apiKeyPrefix: 'Token\u007f' }
+        },
+        apiKey: 'MODELS_PREFIX_TEST_KEY'
+      },
+      {
+        name: 'API key',
+        provider: { modelsApi: { path: '/models' } },
+        apiKey: 'API_KEY_SAFE_PART\r\nX-Injected: API_KEY_SECRET_PART'
+      }
+    ];
+
+    for (const fixture of cases) {
+      await assert.rejects(fetchModels(fixture.provider, baseUrl, fixture.apiKey), error => {
+        assert.match(error.message, /control characters/, fixture.name);
+        assert.equal(error.message.includes(fixture.apiKey), false, `${fixture.name} leaked the API key`);
+        assert.equal(error.message.includes('API_KEY_SECRET_PART'), false, `${fixture.name} leaked a secret fragment`);
+        return true;
+      });
+    }
+
+    const apiKey = 'API_KEY_THAT_MUST_NOT_LEAK';
+    assert.equal(
+      getSafeModelFetchErrorMessage(new Error(`Native header failure: Bearer ${apiKey}`), apiKey),
+      'Model fetch failed.'
+    );
+    assert.equal(
+      getSafeModelFetchErrorMessage(new Error('Connection refused.'), apiKey),
+      'Connection refused.'
+    );
+    assert.equal(
+      getSafeModelFetchErrorMessage(new Error('Connection refused.'), ''),
+      'Connection refused.'
+    );
   });
 
   test('Launcher dry-run mode', async () => {

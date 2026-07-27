@@ -161,6 +161,24 @@ function Get-ByokObjectEntries {
     }
 }
 
+function Test-ByokJsonNumber {
+    param($Value)
+    if ($null -eq $Value -or $Value -is [bool]) { return $false }
+    return [Type]::GetTypeCode($Value.GetType()) -in @(
+        [TypeCode]::Byte,
+        [TypeCode]::SByte,
+        [TypeCode]::Int16,
+        [TypeCode]::UInt16,
+        [TypeCode]::Int32,
+        [TypeCode]::UInt32,
+        [TypeCode]::Int64,
+        [TypeCode]::UInt64,
+        [TypeCode]::Single,
+        [TypeCode]::Double,
+        [TypeCode]::Decimal
+    )
+}
+
 function Assert-ByokEnvMap {
     param($Map, [string]$JsonPath)
     if (-not (Test-ByokJsonObject $Map)) { throw "Invalid provider config at ${JsonPath}: object required." }
@@ -168,16 +186,25 @@ function Assert-ByokEnvMap {
         if ($property.Name -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
             throw "Invalid provider config at $JsonPath.$($property.Name): invalid environment variable name."
         }
-        if ($null -eq $property.Value -or ($property.Value -is [System.Collections.IEnumerable] -and $property.Value -isnot [string])) {
-            throw "Invalid provider config at $JsonPath.$($property.Name): template value must be scalar."
+        $value = $property.Value
+        $allowedScalar = $value -is [string] -or $value -is [bool] -or (Test-ByokJsonNumber $value)
+        if (-not $allowedScalar) {
+            throw "Invalid provider config at $JsonPath.$($property.Name): template value must be scalar (string, number, or boolean)."
         }
     }
 }
 
 function Assert-ByokProviderConfig {
     param($Config)
-    if (-not (Test-ByokJsonObject $Config) -or -not (Test-ByokHasProperty $Config 'version') -or $Config.version -ne 1) {
+    if (-not (Test-ByokJsonObject $Config)) {
         throw 'Invalid provider config at $.version: must equal 1.'
+    }
+    if (-not (Test-ByokHasProperty $Config 'version')) {
+        throw 'Invalid provider config at $.version: must equal 1.'
+    }
+    $version = $Config.version
+    if (-not (Test-ByokJsonNumber $version) -or $version -ne 1) {
+        throw 'Invalid provider config at $.version: must be the number 1.'
     }
     if (-not (Test-ByokHasProperty $Config 'clis') -or -not (Test-ByokJsonObject $Config.clis) -or @(Get-ByokObjectEntries $Config.clis).Count -eq 0) {
         throw 'Invalid provider config at $.clis: at least one CLI is required.'
@@ -194,7 +221,11 @@ function Assert-ByokProviderConfig {
         if (Test-ByokHasProperty $cli 'command') {
             if ($cli.command -isnot [string] -or -not $cli.command.Trim()) { throw "Invalid provider config at $basePath.command: non-empty string required." }
             $command = $cli.command.Trim()
-            if (-not [IO.Path]::IsPathRooted($command) -and $command -notmatch '^[A-Za-z0-9._+\-]+$') {
+            if ([IO.Path]::IsPathRooted($command)) {
+                if ($command -match '^[A-Za-z]:[^\\/]') {
+                    throw "Invalid provider config at $basePath.command: drive-relative paths (e.g., C:file.exe) are not allowed; use fully-qualified paths."
+                }
+            } elseif ($command -notmatch '^[A-Za-z0-9._+\-]+$') {
                 throw "Invalid provider config at $basePath.command: executable name or absolute path required."
             }
         }
@@ -257,14 +288,27 @@ function Assert-ByokProviderConfig {
                 throw "Invalid provider config at $basePath.apiKeyHeader: invalid HTTP header name."
             }
         }
-        if ((Test-ByokHasProperty $provider 'apiKeyPrefix') -and $provider.apiKeyPrefix -isnot [string]) {
-            throw "Invalid provider config at $basePath.apiKeyPrefix: string required."
+        if (Test-ByokHasProperty $provider 'apiKeyPrefix') {
+            if ($provider.apiKeyPrefix -isnot [string]) {
+                throw "Invalid provider config at $basePath.apiKeyPrefix: string required."
+            }
+            if ($provider.apiKeyPrefix -match '[\x00-\x1F\x7F]') {
+                throw "Invalid provider config at $basePath.apiKeyPrefix: control characters are not allowed."
+            }
         }
         if (Test-ByokHasProperty $provider 'modelsApi') {
             if (-not (Test-ByokJsonObject $provider.modelsApi)) { throw "Invalid provider config at $basePath.modelsApi: object required." }
-            foreach ($field in @('path', 'itemsPath', 'idPath', 'apiKeyPrefix')) {
+            foreach ($field in @('path', 'itemsPath', 'idPath')) {
                 if ((Test-ByokHasProperty $provider.modelsApi $field) -and $provider.modelsApi.$field -isnot [string]) {
                     throw "Invalid provider config at $basePath.modelsApi.${field}: string required."
+                }
+            }
+            if (Test-ByokHasProperty $provider.modelsApi 'apiKeyPrefix') {
+                if ($provider.modelsApi.apiKeyPrefix -isnot [string]) {
+                    throw "Invalid provider config at $basePath.modelsApi.apiKeyPrefix: string required."
+                }
+                if ($provider.modelsApi.apiKeyPrefix -match '[\x00-\x1F\x7F]') {
+                    throw "Invalid provider config at $basePath.modelsApi.apiKeyPrefix: control characters are not allowed."
                 }
             }
             if ((Test-ByokHasProperty $provider.modelsApi 'path') -and $provider.modelsApi.path -match '[\x00-\x1F\x7F?#]') {
@@ -734,6 +778,13 @@ function Invoke-ByokModelFetch {
     if ($headerName -notmatch "^[!#\$%&'*+.^_``|~0-9A-Za-z-]+$") { throw 'Configured API key header name is invalid.' }
     $prefix = if ($api.PSObject.Properties.Name -contains 'apiKeyPrefix') { "$($api.apiKeyPrefix)" } elseif ($Provider.PSObject.Properties.Name -contains 'apiKeyPrefix') { "$($Provider.apiKeyPrefix)" } else { 'Bearer ' }
 
+    if ($ApiKey) {
+        $headerValue = "$prefix$ApiKey"
+        if ($headerValue -match '[\x00-\x1F\x7F]') {
+            throw (New-ByokModelFetchError 'API key or prefix contains invalid control characters.')
+        }
+    }
+
     Add-Type -AssemblyName System.Net.Http
     $handler = $null
     $client = $null
@@ -747,8 +798,10 @@ function Invoke-ByokModelFetch {
         $client = New-Object System.Net.Http.HttpClient($handler)
         $client.Timeout = [System.Threading.Timeout]::InfiniteTimeSpan
         $client.DefaultRequestHeaders.TryAddWithoutValidation('Accept', 'application/json') | Out-Null
-        if ($ApiKey -and -not $client.DefaultRequestHeaders.TryAddWithoutValidation($headerName, "$prefix$ApiKey")) {
-            throw (New-ByokModelFetchError 'Configured API key header could not be added to the request.')
+        if ($ApiKey) {
+            if (-not $client.DefaultRequestHeaders.TryAddWithoutValidation($headerName, $headerValue)) {
+                throw (New-ByokModelFetchError 'API key header could not be added to the request.')
+            }
         }
 
         $cancellation = New-Object System.Threading.CancellationTokenSource

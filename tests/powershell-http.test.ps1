@@ -74,7 +74,39 @@ function New-TestProvider {
     }
 }
 
+function Assert-ControlHeaderRejected(
+    $Provider,
+    [string]$ApiKey,
+    [string]$CaseName,
+    [string[]]$ForbiddenFragments
+) {
+    $failed = $false
+    try {
+        Invoke-ByokModelFetch $Provider 'http://127.0.0.1:1/v1' $ApiKey | Out-Null
+    } catch {
+        $message = $_.Exception.Message
+        $failed = $message -match 'control characters'
+        foreach ($fragment in $ForbiddenFragments) {
+            if ($fragment -and $message.Contains($fragment)) {
+                throw "$CaseName leaked a forbidden value in its error message."
+            }
+        }
+    }
+    if (-not $failed) { throw "$CaseName did not reject an unsafe header value." }
+}
+
 try {
+    $providerPrefix = New-TestProvider
+    $providerPrefix.apiKeyPrefix = "Bearer legit`r`nX-Injected: yes`r`nAnother: "
+    Assert-ControlHeaderRejected $providerPrefix 'PROVIDER_PREFIX_TEST_KEY' 'Provider apiKeyPrefix' @('PROVIDER_PREFIX_TEST_KEY', 'X-Injected')
+
+    $modelsPrefix = New-TestProvider
+    $modelsPrefix.modelsApi | Add-Member -NotePropertyName apiKeyPrefix -NotePropertyValue "Token$([char]0x7f)"
+    Assert-ControlHeaderRejected $modelsPrefix 'MODELS_PREFIX_TEST_KEY' 'Models API apiKeyPrefix' @('MODELS_PREFIX_TEST_KEY')
+
+    $unsafeApiKey = "API_KEY_SAFE_PART`r`nX-Injected: API_KEY_SECRET_PART"
+    Assert-ControlHeaderRejected (New-TestProvider) $unsafeApiKey 'API key' @($unsafeApiKey, 'API_KEY_SECRET_PART')
+
     $validBody = '{"data":[{"id":"model-a"},{"id":"model-a"},{"id":"bad\u0001"},{"id":"model-b"}]}'
     $fixture = Start-HttpFixture 200 'application/json' $validBody
     try {

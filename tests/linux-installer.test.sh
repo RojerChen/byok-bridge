@@ -10,6 +10,36 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+snapshot_tree() {
+  node -e '
+    const crypto = require("node:crypto");
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const root = process.argv[1];
+    const rows = [];
+    function walk(dir, relative) {
+      for (const name of fs.readdirSync(dir).sort()) {
+        const absolute = path.join(dir, name);
+        const childRelative = relative ? `${relative}/${name}` : name;
+        const stat = fs.lstatSync(absolute);
+        if (stat.isDirectory()) {
+          rows.push(`D ${childRelative}`);
+          walk(absolute, childRelative);
+        } else if (stat.isFile()) {
+          const hash = crypto.createHash("sha256").update(fs.readFileSync(absolute)).digest("hex");
+          rows.push(`F ${childRelative} ${hash}`);
+        } else if (stat.isSymbolicLink()) {
+          rows.push(`L ${childRelative} ${fs.readlinkSync(absolute)}`);
+        } else {
+          rows.push(`O ${childRelative}`);
+        }
+      }
+    }
+    if (fs.existsSync(root)) walk(root, "");
+    process.stdout.write(rows.join("\n"));
+  ' "$1"
+}
+
 bash -n \
   "$REPO_ROOT/bin/linux/install.sh" \
   "$REPO_ROOT/bin/linux/run.sh" \
@@ -56,6 +86,27 @@ fi
 [[ ! -e "$FRESH_DATA_DIR" ]]
 [[ ! -e "$FRESH_BIN_DIR/byok-cli-hub" ]]
 
+# Creation flags must be registered before chmod so either failure restores an
+# existing empty data directory byte-for-byte and leaves no application files.
+for failure_point in data-marker-chmod data-config-chmod; do
+  FAILURE_ROOT="$TEST_ROOT/$failure_point"
+  FAILURE_APP_DIR="$FAILURE_ROOT/app"
+  FAILURE_DATA_DIR="$FAILURE_ROOT/data"
+  FAILURE_BIN_DIR="$FAILURE_ROOT/bin"
+  mkdir -p "$FAILURE_DATA_DIR"
+  DATA_BEFORE="$(snapshot_tree "$FAILURE_DATA_DIR")"
+  if BYOK_CLI_HUB_TEST_FAIL_AT="$failure_point" bash "$REPO_ROOT/bin/linux/install.sh" \
+    --install-dir "$FAILURE_APP_DIR" \
+    --data-dir "$FAILURE_DATA_DIR" \
+    --bin-dir "$FAILURE_BIN_DIR" >/dev/null 2>&1; then
+    echo "Injected $failure_point failure unexpectedly succeeded." >&2
+    exit 1
+  fi
+  [[ "$DATA_BEFORE" == "$(snapshot_tree "$FAILURE_DATA_DIR")" ]]
+  [[ ! -e "$FAILURE_APP_DIR" ]]
+  [[ ! -e "$FAILURE_BIN_DIR/byok-cli-hub" ]]
+done
+
 bash "$REPO_ROOT/bin/linux/install.sh" \
   --install-dir "$APP_DIR" \
   --data-dir "$DATA_DIR" \
@@ -91,6 +142,22 @@ if bash "$REPO_ROOT/bin/linux/install.sh" \
 fi
 [[ -f "$BIN_DIR/byok-cli-hub" ]]
 [[ ! -e "$TEST_ROOT/relocated-bin/byok-cli-hub" ]]
+
+# A failed copy into the example backup must not register an empty backup,
+# alter any data byte, or leave the temporary backup file behind.
+DATA_BEFORE="$(snapshot_tree "$DATA_DIR")"
+if BYOK_CLI_HUB_TEST_FAIL_AT=data-example-backup-copy bash "$REPO_ROOT/bin/linux/install.sh" \
+  --install-dir "$APP_DIR" \
+  --data-dir "$DATA_DIR" \
+  --bin-dir "$BIN_DIR" >/dev/null 2>&1; then
+  echo 'Injected data example backup-copy failure unexpectedly succeeded.' >&2
+  exit 1
+fi
+[[ "$DATA_BEFORE" == "$(snapshot_tree "$DATA_DIR")" ]]
+if compgen -G "$DATA_DIR/.providers.example.backup.*" >/dev/null; then
+  echo 'Failed data example backup left a temporary file behind.' >&2
+  exit 1
+fi
 
 # Update must preserve config and replace the snapshot transactionally.
 CONFIG_HASH="$(node -e 'const fs=require("node:fs"),c=require("node:crypto");process.stdout.write(c.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' "$DATA_DIR/providers.json")"

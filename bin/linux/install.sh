@@ -296,16 +296,18 @@ mkdir -p "$TARGET_DATA_DIR"
 [[ "$DATA_DIR_CREATED" -ne 1 ]] || chmod 700 "$TARGET_DATA_DIR"
 if [[ ! -e "$TARGET_DATA_DIR/.byok-cli-hub-data" ]]; then
   : > "$TARGET_DATA_DIR/.byok-cli-hub-data"
-  chmod 600 "$TARGET_DATA_DIR/.byok-cli-hub-data"
   DATA_MARKER_CREATED=1
+  failure_point 'data-marker-chmod'
+  chmod 600 "$TARGET_DATA_DIR/.byok-cli-hub-data"
 fi
 if [[ ! -f "$TARGET_DATA_DIR/providers.json" ]]; then
   CONFIG_SOURCE="$REPO_ROOT/config/providers.example.json"
   [[ -f "$CONFIG_SOURCE" ]] || CONFIG_SOURCE="$REPO_ROOT/config/providers.json"
   [[ -f "$CONFIG_SOURCE" ]] || die "Bundled provider configuration is missing."
   cp "$CONFIG_SOURCE" "$TARGET_DATA_DIR/providers.json"
-  chmod 600 "$TARGET_DATA_DIR/providers.json"
   DATA_CONFIG_CREATED=1
+  failure_point 'data-config-chmod'
+  chmod 600 "$TARGET_DATA_DIR/providers.json"
   echo "[OK] Initialized $TARGET_DATA_DIR/providers.json"
 else
   echo "[INFO] Preserved $TARGET_DATA_DIR/providers.json"
@@ -315,8 +317,15 @@ if [[ -f "$REPO_ROOT/config/providers.example.json" ]]; then
     die "Provider example path is not a regular file: $TARGET_DATA_DIR/providers.example.json"
   fi
   if [[ -f "$TARGET_DATA_DIR/providers.example.json" ]]; then
-    DATA_EXAMPLE_BACKUP="$(mktemp "$TARGET_DATA_DIR/.providers.example.backup.XXXXXX")"
-    cp -p -- "$TARGET_DATA_DIR/providers.example.json" "$DATA_EXAMPLE_BACKUP"
+    DATA_EXAMPLE_BACKUP_TEMP="$(mktemp "$TARGET_DATA_DIR/.providers.example.backup.XXXXXX")"
+    if ! (
+      failure_point 'data-example-backup-copy'
+      cp -p -- "$TARGET_DATA_DIR/providers.example.json" "$DATA_EXAMPLE_BACKUP_TEMP"
+    ); then
+      rm -f -- "$DATA_EXAMPLE_BACKUP_TEMP"
+      die "Failed to backup existing providers.example.json"
+    fi
+    DATA_EXAMPLE_BACKUP="$DATA_EXAMPLE_BACKUP_TEMP"
   else
     DATA_EXAMPLE_CREATED=1
   fi

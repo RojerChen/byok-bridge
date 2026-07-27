@@ -22,7 +22,7 @@ import {
   getSensitiveEnvKeys
 } from './lib/env.mjs';
 import { parseArgs, UsageError } from './lib/args.mjs';
-import { fetchModels } from './lib/http.mjs';
+import { fetchModels, getSafeModelFetchErrorMessage } from './lib/http.mjs';
 import { readMaskedPrompt, readInput, selectMenuItem } from './lib/prompt.mjs';
 import { launchCli } from './lib/launcher.mjs';
 
@@ -272,11 +272,12 @@ async function main() {
       try {
         fetchedModelIds = await fetchModels(selectedProvider, baseUrl, apiKey);
       } catch (err) {
+        const safeMessage = getSafeModelFetchErrorMessage(err, apiKey);
         if (!options.refresh && cachedModels.length > 0) {
           availableModels = cachedModels;
-          console.warn(`Warning: model refresh failed; using stale cache for '${selectedProvider.id}': ${err.message}`);
+          console.warn(`Warning: model refresh failed; using stale cache for '${selectedProvider.id}': ${safeMessage}`);
         } else {
-          console.error(`Error fetching models: ${err.message}`);
+          console.error(`Error fetching models: ${safeMessage}`);
           process.exit(1);
         }
       }

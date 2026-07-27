@@ -14,6 +14,9 @@ The format is intentionally simple and follows a lightweight `Keep a Changelog` 
 - Isolated Windows `0.0.1` migration, rollback, unknown-owner, and malformed-config fixtures.
 - PowerShell HTTP security tests and Node/PowerShell concurrent cache/stale-lock recovery tests.
 - Platform-aware `npm test` orchestration, shared Node/PowerShell config contract fixtures, and Windows/Ubuntu CI jobs.
+- Comprehensive cross-runtime config fixtures for strict scalar types, header/prefix controls, URL/path rules, unknown-field policy, and Windows executable/drive-rooted/UNC/drive-relative command paths.
+- Node and PowerShell regression coverage for provider/model API prefix injection, API-key control characters, and secret-safe model-fetch errors.
+- Linux installer failure injection for example-backup copy and marker/config permission failures, with SHA-256 snapshots proving that failed transactions preserve the data tree byte-for-byte.
 
 ### Changed
 
@@ -30,7 +33,10 @@ The format is intentionally simple and follows a lightweight `Keep a Changelog` 
 - PowerShell model discovery now applies one deadline to headers and the complete response body, uses structured domain-error tagging, and accepts valid empty root or nested model arrays.
 - Windows and Linux installation rollback now restores installer-created or replaced data files. Windows also restores partially moved `0.0.1` files if migration fails in the middle of the move loop.
 - Managed updates reject silent data/shim/extension path relocation that could leave orphaned managed files; relocation requires uninstalling and reinstalling.
-- Node and PowerShell config validation now agree on command paths, header/prefix types, and `modelsApi.path` restrictions.
+- Node and PowerShell config validation now agree on strict `version` and template scalar types, command paths, header/prefix types and control characters, URL rules, and `modelsApi.path` restrictions.
+- PowerShell rejects drive-relative commands such as `C:tools\cli.exe` while accepting fully qualified drive-rooted and UNC paths.
+- Linux registers example backups only after a successful copy, records marker/config creation before permission changes, and removes incomplete backup temporaries on failure.
+- Model-fetch header values are validated before dispatch, and Node manager errors that contain a non-empty API key are replaced with a generic safe message.
 
 ### Windows 0.0.1 upgrade
 
@@ -43,6 +49,7 @@ The format is intentionally simple and follows a lightweight `Keep a Changelog` 
 ### Security
 
 - PowerShell model discovery now rejects credentials/query/fragment URLs and redirects, enforces status/content-type and a 2 MiB response limit, and validates/deduplicates model IDs.
+- Provider prefixes, models API prefixes, and API keys cannot inject HTTP headers through C0 or DEL control characters; related validation errors do not echo secret values.
 - Manifest paths are revalidated before destructive operations; unknown application, shim, and extension owners are never silently overwritten or removed.
 - Storage updates use a common lock contract, atomic replacement, damaged-file preservation, PID-aware stale-lock recovery, and locked read-modify-write transactions.
 - Shell env export/temp-file secret flows were removed; credentials are passed only through the launched child environment and redacted in output.

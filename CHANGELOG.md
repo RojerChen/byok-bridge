@@ -10,11 +10,18 @@ The format is intentionally simple and follows a lightweight `Keep a Changelog` 
 
 - Linux/WSL Bash integration that applies the dynamically resolved Node launch environment to the current shell, launches the configured CLI, and retains the values until the next plan, deactivation, or terminal close.
 - Versioned FD 3 shell-plan protocol, strict hex data parsing, caller-environment transaction/rollback, provider-switch cleanup, original-value restoration, and `byok-cli-hub-deactivate`/`byok-cli-hub-shell-unload` helpers.
-- Managed installer ownership and rollback for the sourceable `byok-cli-hub-shell` helper and automatic `~/.bashrc` startup block, plus Node, Bash session, xtrace, malformed-protocol, and installer regression coverage.
+- Managed installer ownership and rollback for the application-snapshot Bash library and automatic `~/.bashrc` startup block, plus Node, Bash session, xtrace, malformed-protocol, and installer regression coverage.
+
+### Changed
+
+- Moved the Bash source-only integration from `bin/linux/shell-integration.sh` to `shell/bash/byok-cli-hub.bash`, and the installer-internal profile tool from `bin/linux/bashrc-integration.mjs` to `libexec/linux/bash-profile-manager.mjs`.
+- Linux installs now keep only the executable `byok-cli-hub` shim in `bin-dir`; the source library and profile manager are owned as part of the application snapshot.
+- The Linux install manifest now lists only the external executable shim in `managedFiles`. Managed upgrades transactionally replace the `.bashrc` source path and remove the former owned `byok-cli-hub-shell`, while rollback restores the old application, startup block, shim, and helper.
+- Unknown or unmarked files named `<bin-dir>/byok-cli-hub-shell` are preserved during update and uninstall. Windows launcher and installer paths are unchanged.
 
 ### Security
 
-- The managed `.bashrc` block contains only a fixed helper path and restoration metadata—never provider/model/API-key values. Shell integration uses no `eval` or secret-bearing regular temp file, rejects unsafe parent-shell variables, and keeps unredacted plan data off stdout/stderr. Explicit executable mode remains child-only.
+- The managed `.bashrc` block contains only fixed, shell-quoted library/shim paths and restoration metadata—never provider/model/API-key values. Shell integration uses no `eval` or secret-bearing regular temp file, rejects unsafe parent-shell variables, and keeps unredacted plan data off stdout/stderr. Explicit executable mode remains child-only.
 
 ## [0.0.2] - 2026-07-24
 

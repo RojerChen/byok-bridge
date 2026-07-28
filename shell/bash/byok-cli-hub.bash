@@ -21,13 +21,29 @@ if (( BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 2) ))
 fi
 
 _BYOK_CLI_HUB_SOURCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P)"
-if [[ -z "$_BYOK_CLI_HUB_SOURCE_DIR" || ! -x "$_BYOK_CLI_HUB_SOURCE_DIR/byok-cli-hub" ]]; then
-  printf '%s\n' 'Error: Could not locate the real byok-cli-hub executable beside the shell integration helper.' >&2
-  unset _BYOK_CLI_HUB_SOURCE_DIR
+if [[ -z "$_BYOK_CLI_HUB_SOURCE_DIR" ]]; then
+  printf '%s\n' 'Error: Could not resolve the BYOK CLI Hub shell integration directory.' >&2
   return 2
 fi
 
-_BYOK_CLI_HUB_REAL_COMMAND="$_BYOK_CLI_HUB_SOURCE_DIR/byok-cli-hub"
+if [[ "${1-}" == '--byok-cli-hub-managed-command' ]]; then
+  if [[ "$#" -ne 2 || -z "${2-}" ]]; then
+    printf '%s\n' 'Error: The managed BYOK CLI Hub command context is invalid.' >&2
+    unset _BYOK_CLI_HUB_SOURCE_DIR
+    return 2
+  fi
+  _BYOK_CLI_HUB_REAL_COMMAND="$2"
+else
+  _BYOK_CLI_HUB_APP_DIR="$(cd -- "$_BYOK_CLI_HUB_SOURCE_DIR/../.." 2>/dev/null && pwd -P)"
+  _BYOK_CLI_HUB_REAL_COMMAND="$_BYOK_CLI_HUB_APP_DIR/bin/linux/byok-cli-hub"
+  unset _BYOK_CLI_HUB_APP_DIR
+fi
+if [[ ! -x "$_BYOK_CLI_HUB_REAL_COMMAND" ]]; then
+  printf '%s\n' "Error: Could not locate the real byok-cli-hub executable: $_BYOK_CLI_HUB_REAL_COMMAND" >&2
+  unset _BYOK_CLI_HUB_SOURCE_DIR _BYOK_CLI_HUB_REAL_COMMAND
+  return 2
+fi
+
 _BYOK_CLI_HUB_OWNER_BASHPID="$BASHPID"
 unset _BYOK_CLI_HUB_SOURCE_DIR
 

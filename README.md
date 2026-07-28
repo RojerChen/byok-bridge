@@ -77,7 +77,8 @@ Default locations:
 | Application snapshot | `${XDG_DATA_HOME:-$HOME/.local/share}/byok-cli-hub` |
 | User data | `$HOME/.byok-cli-hub` |
 | Command shim | `$HOME/.local/bin/byok-cli-hub` |
-| Sourceable shell helper | `$HOME/.local/bin/byok-cli-hub-shell` |
+| Sourceable Bash library | `${XDG_DATA_HOME:-$HOME/.local/share}/byok-cli-hub/shell/bash/byok-cli-hub.bash` |
+| Installer-internal profile manager | `${XDG_DATA_HOME:-$HOME/.local/share}/byok-cli-hub/libexec/linux/bash-profile-manager.mjs` |
 | Managed Bash startup block | `$HOME/.bashrc` |
 | Optional extension | `${COPILOT_HOME:-$HOME/.copilot}/extensions/byok-cli-hub-copilot` |
 
@@ -90,7 +91,9 @@ bash bin/linux/install.sh \
   --bin-dir "$HOME/.local/bin"
 ```
 
-The resolved data directory is recorded in the managed install manifest and exported by the generated shim as `BYOK_CLI_HUB_DATA_DIR`, so the Manager and extension read the same state/cache. Application, shim, shell helper, managed `.bashrc` block, extension, and installer-created data changes are rolled back together if a later validation or switch step fails.
+The resolved data directory is recorded in the managed install manifest and exported by the generated shim as `BYOK_CLI_HUB_DATA_DIR`, so the Manager and extension read the same state/cache. The sourceable Bash library is part of the application snapshot; the external bin directory contains only the executable `byok-cli-hub` shim. Application, shim, managed `.bashrc` block, extension, and installer-created data changes are rolled back together if a later validation or switch step fails.
+
+Linux files are grouped by how they are invoked: `bin/linux` contains directly executable launch/install commands, `shell/bash` contains the source-only caller-shell library, and `libexec/linux` contains installer-internal tools. Windows entry points remain under `bin/win`.
 
 The installer adds an owned, non-secret block to `~/.bashrc`. Open a new WSL/Bash terminal after installation, or replace the current shell once:
 
@@ -102,7 +105,18 @@ byok-cli-hub
 byok-cli-hub-deactivate
 ```
 
-The startup block only loads fixed Bash functions; it does not store or resolve provider/model/API-key values. Provider selection and prompting still happen each time `byok-cli-hub` is called. The final values are returned by Node over a private anonymous file descriptor, validated as data, exported by the function, and then used to launch the CLI. No `eval` or secret-bearing temporary file is used. Run `command byok-cli-hub` or the shim's absolute path to bypass the function and use isolated child-only mode. Repo mode can source `bin/linux/shell-integration.sh` manually.
+The startup block only loads fixed Bash functions and passes the canonical managed shim path; it does not store or resolve provider/model/API-key values. Provider selection and prompting still happen each time `byok-cli-hub` is called. The final values are returned by Node over a private anonymous file descriptor, validated as data, exported by the function, and then used to launch the CLI. No `eval` or secret-bearing temporary file is used. Run `command byok-cli-hub` or the shim's absolute path to bypass the function and use isolated child-only mode.
+
+From a repository checkout, choose the invocation contract explicitly:
+
+```bash
+# Direct executable; environment changes remain child-only.
+./bin/linux/byok-cli-hub
+
+# Source library; successful launch plans remain in the current Bash.
+source shell/bash/byok-cli-hub.bash
+byok-cli-hub
+```
 
 The managed startup block contains original-file restoration metadata, while its path and ownership are recorded in the install manifest. Both are updated transactionally, and the uninstaller removes the block without removing unrelated `.bashrc` content. It does not preserve provider/model/API-key values across terminals. API keys retained in a caller shell can be inherited by other programs subsequently launched from that shell; use child-only mode when that wider session scope is not desired.
 
@@ -114,7 +128,7 @@ This project continues to be distributed as source in `0.0.3`; it does not provi
 
 Repo mode means running `bin\win\run.cmd` or `bin/linux/run.sh` directly from a clone. Upgrade by running `git pull` or checking out a newer release tag. Repo mode does not copy an application snapshot or modify `PATH`, so it has no separate uninstall step.
 
-Installed mode means running the installer from downloaded or cloned release source. Upgrade by obtaining the newer source and rerunning that version's installer. The installer replaces only its managed application snapshot, shim/shell-helper entries, `.bashrc` block, manifest, and optional managed extension; user config, state, and cache remain in the data directory. Use the installed uninstaller for removal.
+Installed mode means running the installer from downloaded or cloned release source. Upgrade by obtaining the newer source and rerunning that version's installer. The installer replaces only its managed application snapshot, executable shim, `.bashrc` block, manifest, and optional managed extension; user config, state, and cache remain in the data directory. An upgrade from the former layout safely removes an owned `<bin-dir>/byok-cli-hub-shell` only after the new snapshot and startup block have switched successfully; an unknown file at that path is preserved. Use the installed uninstaller for removal.
 
 A managed update must keep the data, shim, and extension paths recorded by the existing manifest. Windows rejects a different `BYOK_CLI_HUB_DATA_DIR` or `COPILOT_HOME`; Linux rejects different `--data-dir` or `--bin-dir` values. To relocate these paths without leaving orphaned managed files, uninstall first and then reinstall with the new locations.
 
@@ -254,7 +268,7 @@ bash bin/linux/uninstall.sh --purge-data
 bash bin/linux/uninstall.sh --purge-data --yes
 ```
 
-The uninstaller reads the managed manifest, removes only the owned application snapshot, shim, shell helper, optional extension, and managed `.bashrc` block, and preserves unrelated `.bashrc` content and user data by default. A pre-manifest install requires `--force-legacy` and recognizable BYOK CLI Hub files. Functions already loaded in the current terminal remain available until you run `byok-cli-hub-shell-unload` or close that terminal.
+The uninstaller reads the managed manifest, removes only the owned application snapshot (including its Bash library), executable shim, optional extension, and managed `.bashrc` block, and preserves unrelated `.bashrc` content and user data by default. It also removes a former `<bin-dir>/byok-cli-hub-shell` only when the old manifest and file marker both prove ownership. A pre-manifest install requires `--force-legacy` and recognizable BYOK CLI Hub files. Functions already loaded in the current terminal remain available until you run `byok-cli-hub-shell-unload` or close that terminal.
 
 Neither uninstaller removes GitHub Copilot CLI or any other separately installed AI CLI.
 
@@ -281,6 +295,6 @@ npm run test:all:linux
 
 `npm test` is platform-aware: Windows runs Node, PowerShell smoke/HTTP, and Windows installer suites; Linux runs Node, caller-shell integration, and Linux installer suites. A current Windows run contains 22 Node/cross-runtime assertions in addition to the PowerShell and installer suites. The Windows and Ubuntu jobs in `.github/workflows/test.yml` run this same entry point in CI.
 
-The tests cover the shared Node/PowerShell config contract (including strict scalar types and Windows command-path variants), damaged-file preservation, endpoint-scoped cache freshness, bounded HTTP reads and stalled-body deadlines, empty model arrays, header-injection rejection and API-key-safe errors, strict arguments, redaction, side-effect-free dry-run, active and abandoned cross-runtime locks, caller-shell environment apply/switch/deactivate behavior, FD protocol validation, xtrace redaction, Windows `0.0.1` migration and rollback, managed-path relocation guards, and Windows/Linux data-aware installation transactions. Linux failure injection also verifies shell-helper ownership/rollback, example-backup copy failure, and marker/config `chmod` failure.
+The tests cover the shared Node/PowerShell config contract (including strict scalar types and Windows command-path variants), damaged-file preservation, endpoint-scoped cache freshness, bounded HTTP reads and stalled-body deadlines, empty model arrays, header-injection rejection and API-key-safe errors, strict arguments, redaction, side-effect-free dry-run, active and abandoned cross-runtime locks, caller-shell environment apply/switch/deactivate behavior, FD protocol validation, xtrace redaction, Windows `0.0.1` migration and rollback, managed-path relocation guards, and Windows/Linux data-aware installation transactions. Linux failure injection also verifies old-to-new shell-library migration, legacy-helper ownership and rollback, unknown-file preservation, example-backup copy failure, and marker/config `chmod` failure.
 
 The completed `0.0.2` review and remediation record is in [`doc/improve_0.0.2.md`](doc/improve_0.0.2.md).

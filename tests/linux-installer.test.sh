@@ -49,9 +49,9 @@ bash -n \
   "$REPO_ROOT/bin/linux/install.sh" \
   "$REPO_ROOT/bin/linux/run.sh" \
   "$REPO_ROOT/bin/linux/uninstall.sh" \
-  "$REPO_ROOT/bin/linux/shell-integration.sh" \
+  "$REPO_ROOT/shell/bash/byok-cli-hub.bash" \
   "$REPO_ROOT/bin/linux/byok-cli-hub"
-node --check "$REPO_ROOT/bin/linux/bashrc-integration.mjs"
+node --check "$REPO_ROOT/libexec/linux/bash-profile-manager.mjs"
 
 mkdir -p "$TEST_ROOT/fake-bin"
 cat > "$TEST_ROOT/fake-bin/copilot" << 'EOF'
@@ -74,20 +74,18 @@ if bash "$REPO_ROOT/bin/linux/install.sh" --check \
   exit 1
 fi
 
-# An unowned shell integration helper must never be overwritten.
+# An obsolete, unowned shell integration helper is outside the new installer's
+# ownership and must survive installation and uninstallation unchanged.
 UNOWNED_ROOT="$TEST_ROOT/unowned-shell-helper"
 mkdir -p "$UNOWNED_ROOT/bin"
 printf '%s\n' 'preserve-shell-helper' > "$UNOWNED_ROOT/bin/byok-cli-hub-shell"
-if bash "$REPO_ROOT/bin/linux/install.sh" \
+bash "$REPO_ROOT/bin/linux/install.sh" \
   --install-dir "$UNOWNED_ROOT/app" \
   --data-dir "$UNOWNED_ROOT/data" \
-  --bin-dir "$UNOWNED_ROOT/bin" >/dev/null 2>&1; then
-  echo 'Installer overwrote an unowned shell integration helper.' >&2
-  exit 1
-fi
+  --bin-dir "$UNOWNED_ROOT/bin" >/dev/null
 [[ "$(cat "$UNOWNED_ROOT/bin/byok-cli-hub-shell")" == 'preserve-shell-helper' ]]
-[[ ! -e "$UNOWNED_ROOT/app" ]]
-[[ ! -e "$UNOWNED_ROOT/data" ]]
+bash "$REPO_ROOT/bin/linux/uninstall.sh" --install-dir "$UNOWNED_ROOT/app" >/dev/null
+[[ "$(cat "$UNOWNED_ROOT/bin/byok-cli-hub-shell")" == 'preserve-shell-helper' ]]
 
 APP_DIR="$TEST_ROOT/app"
 DATA_DIR="$TEST_ROOT/data"
@@ -140,11 +138,14 @@ node -e 'const m=require(process.argv[1]); if(m.appVersion!=="0.0.2"||m.withExte
 [[ -f "$DATA_DIR/providers.json" ]]
 [[ -f "$DATA_DIR/.byok-cli-hub-data" ]]
 grep -q '^# BYOK_CLI_HUB_MANAGED_SHIM=1$' "$BIN_DIR/byok-cli-hub"
-grep -q '^# BYOK_CLI_HUB_MANAGED_SHELL_INTEGRATION=1$' "$BIN_DIR/byok-cli-hub-shell"
+grep -q '^# BYOK_CLI_HUB_MANAGED_SHELL_INTEGRATION=1$' "$APP_DIR/shell/bash/byok-cli-hub.bash"
+[[ -f "$APP_DIR/libexec/linux/bash-profile-manager.mjs" ]]
+[[ ! -e "$BIN_DIR/byok-cli-hub-shell" ]]
 grep -q '^# BYOK_CLI_HUB_MANAGED_BASHRC=1$' "$HOME/.bashrc"
+grep -Fq "source '$APP_DIR/shell/bash/byok-cli-hub.bash' --byok-cli-hub-managed-command '$BIN_DIR/byok-cli-hub'" "$HOME/.bashrc"
 [[ "$(grep -c '^# >>> BYOK CLI Hub managed shell integration >>>$' "$HOME/.bashrc")" -eq 1 ]]
-bash -c 'source "$1"; declare -F byok-cli-hub >/dev/null; declare -F byok-cli-hub-deactivate >/dev/null' _ "$BIN_DIR/byok-cli-hub-shell"
-BYOK_TEST_EXPECTED_BASHRC="$HOME/.bashrc" node -e 'const m=require(process.argv[1]); if(!m.managedFiles.includes("byok-cli-hub-shell")||m.shellStartupManaged!==true||m.bashrcPath!==process.env.BYOK_TEST_EXPECTED_BASHRC) process.exit(1)' "$APP_DIR/.byok-cli-hub-install.json"
+bash -c 'source "$1" --byok-cli-hub-managed-command "$2"; declare -F byok-cli-hub >/dev/null; declare -F byok-cli-hub-deactivate >/dev/null' _ "$APP_DIR/shell/bash/byok-cli-hub.bash" "$BIN_DIR/byok-cli-hub"
+BYOK_TEST_EXPECTED_BASHRC="$HOME/.bashrc" node -e 'const m=require(process.argv[1]); if(m.managedFiles.length!==1||m.managedFiles[0]!=="byok-cli-hub"||m.shellStartupManaged!==true||m.bashrcPath!==process.env.BYOK_TEST_EXPECTED_BASHRC) process.exit(1)' "$APP_DIR/.byok-cli-hub-install.json"
 bash --noprofile --rcfile "$HOME/.bashrc" -ic '[[ "$(type -t byok-cli-hub)" == function ]]' 2>/dev/null
 # Keep this startup integration assertion fully offline.
 node -e 'const fs=require("node:fs"),p=process.argv[1],c=JSON.parse(fs.readFileSync(p,"utf8"));c.providers["openai-compatible"].models=["gpt-4o"];fs.writeFileSync(p,JSON.stringify(c,null,2)+"\n")' "$DATA_DIR/providers.json"
@@ -195,27 +196,21 @@ if compgen -G "$DATA_DIR/.providers.example.backup.*" >/dev/null; then
   exit 1
 fi
 
-# An update from a pre-auto-load manifest installs the startup block and new ownership metadata.
+# Build an old-layout fixture: its manifest owns an external source helper and
+# predates automatic Bash startup metadata.
 BASHRC_REMOVE_TEMP="$(mktemp "$HOME/.bashrc.remove.XXXXXX")"
-node "$REPO_ROOT/bin/linux/bashrc-integration.mjs" remove "$HOME/.bashrc" "$BASHRC_REMOVE_TEMP" >/dev/null
+node "$REPO_ROOT/libexec/linux/bash-profile-manager.mjs" remove "$HOME/.bashrc" "$BASHRC_REMOVE_TEMP" >/dev/null
 chmod --reference="$HOME/.bashrc" "$BASHRC_REMOVE_TEMP"
 mv -f -- "$BASHRC_REMOVE_TEMP" "$HOME/.bashrc"
-node -e 'const fs=require("node:fs"),p=process.argv[1],m=JSON.parse(fs.readFileSync(p,"utf8"));delete m.bashrcPath;delete m.shellStartupManaged;fs.writeFileSync(p,JSON.stringify(m,null,2)+"\n")' "$APP_DIR/.byok-cli-hub-install.json"
+cp "$APP_DIR/shell/bash/byok-cli-hub.bash" "$BIN_DIR/byok-cli-hub-shell"
+node -e 'const fs=require("node:fs"),p=process.argv[1],m=JSON.parse(fs.readFileSync(p,"utf8"));delete m.bashrcPath;delete m.shellStartupManaged;m.managedFiles=["byok-cli-hub","byok-cli-hub-shell"];fs.writeFileSync(p,JSON.stringify(m,null,2)+"\n")' "$APP_DIR/.byok-cli-hub-install.json"
 [[ "$BASHRC_ORIGINAL_HASH" == "$(node -e 'const fs=require("node:fs"),c=require("node:crypto");process.stdout.write(c.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' "$HOME/.bashrc")" ]]
 
-# Update must preserve config and replace the snapshot transactionally.
+# Every switch boundary in an old-to-new update must restore the previous app,
+# shim, Bash startup file, legacy helper, extension, and user data.
 CONFIG_HASH="$(node -e 'const fs=require("node:fs"),c=require("node:crypto");process.stdout.write(c.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' "$DATA_DIR/providers.json")"
-bash "$REPO_ROOT/bin/linux/install.sh" \
-  --install-dir "$APP_DIR" \
-  --data-dir "$DATA_DIR" \
-  --bin-dir "$BIN_DIR"
-[[ "$CONFIG_HASH" == "$(node -e 'const fs=require("node:fs"),c=require("node:crypto");process.stdout.write(c.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' "$DATA_DIR/providers.json")" ]]
-[[ "$(grep -c '^# >>> BYOK CLI Hub managed shell integration >>>$' "$HOME/.bashrc")" -eq 1 ]]
-node -e 'const m=require(process.argv[1]);if(m.shellStartupManaged!==true||!m.bashrcPath)process.exit(1)' "$APP_DIR/.byok-cli-hub-install.json"
-
-# Every switch boundary must restore the previous app, shim, Bash startup file, and extension.
 EXT_DIR="$COPILOT_HOME/extensions/byok-cli-hub-copilot"
-for failure_point in after-app-backup after-shim-backup after-shell-helper-backup after-bashrc-backup after-extension-backup before-backup-cleanup; do
+for failure_point in after-app-backup after-shim-backup after-bashrc-backup after-legacy-shell-helper-backup after-extension-backup before-backup-cleanup; do
   printf '%s\n' "$failure_point" > "$APP_DIR/rollback-sentinel.txt"
   printf '# rollback=%s\n' "$failure_point" >> "$BIN_DIR/byok-cli-hub"
   printf '# rollback=%s\n' "$failure_point" >> "$BIN_DIR/byok-cli-hub-shell"
@@ -237,13 +232,35 @@ for failure_point in after-app-backup after-shim-backup after-shell-helper-backu
   [[ "$BASHRC_BEFORE_HASH" == "$(node -e 'const fs=require("node:fs"),c=require("node:crypto");process.stdout.write(c.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' "$HOME/.bashrc")" ]]
 done
 
+# A successful update moves the source library into the application snapshot,
+# removes the old owned helper, and retains config plus startup ownership.
+bash "$REPO_ROOT/bin/linux/install.sh" \
+  --install-dir "$APP_DIR" \
+  --data-dir "$DATA_DIR" \
+  --bin-dir "$BIN_DIR"
+[[ "$CONFIG_HASH" == "$(node -e 'const fs=require("node:fs"),c=require("node:crypto");process.stdout.write(c.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' "$DATA_DIR/providers.json")" ]]
+[[ "$(grep -c '^# >>> BYOK CLI Hub managed shell integration >>>$' "$HOME/.bashrc")" -eq 1 ]]
+[[ ! -e "$BIN_DIR/byok-cli-hub-shell" ]]
+node -e 'const m=require(process.argv[1]);if(m.shellStartupManaged!==true||!m.bashrcPath||m.managedFiles.includes("byok-cli-hub-shell"))process.exit(1)' "$APP_DIR/.byok-cli-hub-install.json"
+
+# Even a legacy manifest claim is insufficient to delete a same-name file
+# whose ownership marker is missing.
+printf '%s\n' 'preserve-unowned-legacy-helper' > "$BIN_DIR/byok-cli-hub-shell"
+node -e 'const fs=require("node:fs"),p=process.argv[1],m=JSON.parse(fs.readFileSync(p,"utf8"));m.managedFiles=["byok-cli-hub","byok-cli-hub-shell"];fs.writeFileSync(p,JSON.stringify(m,null,2)+"\n")' "$APP_DIR/.byok-cli-hub-install.json"
+bash "$REPO_ROOT/bin/linux/install.sh" \
+  --install-dir "$APP_DIR" \
+  --data-dir "$DATA_DIR" \
+  --bin-dir "$BIN_DIR" >/dev/null
+[[ "$(cat "$BIN_DIR/byok-cli-hub-shell")" == 'preserve-unowned-legacy-helper' ]]
+
 bash "$REPO_ROOT/bin/linux/uninstall.sh" --install-dir "$APP_DIR"
 [[ ! -e "$APP_DIR" ]]
 [[ ! -e "$BIN_DIR/byok-cli-hub" ]]
-[[ ! -e "$BIN_DIR/byok-cli-hub-shell" ]]
+[[ "$(cat "$BIN_DIR/byok-cli-hub-shell")" == 'preserve-unowned-legacy-helper' ]]
 [[ ! -e "$EXT_DIR" ]]
 [[ -f "$DATA_DIR/providers.json" ]]
 [[ "$BASHRC_ORIGINAL_HASH" == "$(node -e 'const fs=require("node:fs"),c=require("node:crypto");process.stdout.write(c.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' "$HOME/.bashrc")" ]]
+rm -f -- "$BIN_DIR/byok-cli-hub-shell"
 
 bash "$REPO_ROOT/bin/linux/install.sh" \
   --install-dir "$APP_DIR" \

@@ -3,6 +3,7 @@
 
 # Unix / Linux scripts and Node ESM
 *.sh                 text eol=lf
+*.bash               text eol=lf
 *.mjs                text eol=lf
 *.json               text eol=lf
 *.md                 text eol=lf

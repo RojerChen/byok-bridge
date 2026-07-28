@@ -69,31 +69,32 @@ function quoteForBash(value) {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function makeBlock(helperPath, originalFilePresent, prefixNewlineAdded) {
+function makeBlock(helperPath, commandPath, originalFilePresent, prefixNewlineAdded) {
   const helper = quoteForBash(helperPath);
+  const command = quoteForBash(commandPath);
   return Buffer.from([
     BEGIN,
     MANAGED,
     `${ORIGINAL_PREFIX}${originalFilePresent ? '1' : '0'}`,
     `${NEWLINE_PREFIX}${prefixNewlineAdded ? '1' : '0'}`,
     `if [[ -r ${helper} ]]; then`,
-    `  source ${helper}`,
+    `  source ${helper} --byok-cli-hub-managed-command ${command}`,
     'fi',
     END,
     ''
   ].join('\n'));
 }
 
-function installBlock(input, helperPath, inputFilePresent) {
+function installBlock(input, helperPath, commandPath, inputFilePresent) {
   const existing = locateManagedBlock(input);
   if (existing) {
-    const block = makeBlock(helperPath, existing.originalFilePresent, existing.prefixNewlineAdded);
+    const block = makeBlock(helperPath, commandPath, existing.originalFilePresent, existing.prefixNewlineAdded);
     return Buffer.concat([input.subarray(0, existing.start), block, input.subarray(existing.after)]);
   }
 
   const prefixNewlineAdded = input.length > 0 && input[input.length - 1] !== 0x0a;
   const separator = prefixNewlineAdded ? Buffer.from('\n') : Buffer.alloc(0);
-  return Buffer.concat([input, separator, makeBlock(helperPath, inputFilePresent, prefixNewlineAdded)]);
+  return Buffer.concat([input, separator, makeBlock(helperPath, commandPath, inputFilePresent, prefixNewlineAdded)]);
 }
 
 function removeBlock(input) {
@@ -113,24 +114,24 @@ function removeBlock(input) {
   };
 }
 
-const [action, inputPath, outputPath, helperPath] = process.argv.slice(2);
+const [action, inputPath, outputPath, helperPath, commandPath] = process.argv.slice(2);
 if (!['check-install', 'install', 'remove'].includes(action) || !inputPath) {
-  fail('Usage: bashrc-integration.mjs check-install INPUT HELPER | install INPUT OUTPUT HELPER | remove INPUT OUTPUT');
+  fail('Usage: bash-profile-manager.mjs check-install INPUT HELPER COMMAND | install INPUT OUTPUT HELPER COMMAND | remove INPUT OUTPUT');
 }
 
 const inputFilePresent = inputPath !== '-';
 const input = inputFilePresent ? fs.readFileSync(inputPath) : Buffer.alloc(0);
 
 if (action === 'check-install') {
-  if (!outputPath) fail('check-install requires the shell helper path.');
-  installBlock(input, outputPath, inputFilePresent);
+  if (!outputPath || !helperPath) fail('check-install requires the shell helper and command paths.');
+  installBlock(input, outputPath, helperPath, inputFilePresent);
   process.exit(0);
 }
 
 if (!outputPath) fail(`${action} requires an output path.`);
 if (action === 'install') {
-  if (!helperPath) fail('install requires the shell helper path.');
-  fs.writeFileSync(outputPath, installBlock(input, helperPath, inputFilePresent));
+  if (!helperPath || !commandPath) fail('install requires the shell helper and command paths.');
+  fs.writeFileSync(outputPath, installBlock(input, helperPath, commandPath, inputFilePresent));
   console.log('1 0');
 } else {
   const result = removeBlock(input);

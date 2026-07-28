@@ -10,7 +10,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-bash -n "$REPO_ROOT/bin/linux/shell-integration.sh"
+bash -n "$REPO_ROOT/shell/bash/byok-cli-hub.bash"
 
 mkdir -p "$TEST_ROOT/data" "$TEST_ROOT/fake-bin"
 FAKE_CLI="$TEST_ROOT/fake-bin/fake-ai-cli"
@@ -88,7 +88,7 @@ PATH="$REPO_ROOT/bin/linux:$PATH"
 export PATH
 
 # Executing the helper cannot affect the caller and must be rejected.
-if bash "$REPO_ROOT/bin/linux/shell-integration.sh" >/dev/null 2>&1; then
+if bash "$REPO_ROOT/shell/bash/byok-cli-hub.bash" >/dev/null 2>&1; then
   echo 'Shell integration helper unexpectedly allowed direct execution.' >&2
   exit 1
 else
@@ -96,7 +96,7 @@ else
 fi
 
 # Sourcing only registers functions; it must not resolve or apply a plan.
-source "$REPO_ROOT/bin/linux/shell-integration.sh"
+source "$REPO_ROOT/shell/bash/byok-cli-hub.bash"
 declare -F byok-cli-hub >/dev/null
 declare -F byok-cli-hub-deactivate >/dev/null
 [[ "$TEST_RESTORE" == 'original-value' ]]
@@ -125,7 +125,7 @@ grep -Fq 'arg2=$(not-executed)' "$CAPTURE_FILE"
 grep -q '^arg3=$' "$CAPTURE_FILE"
 
 # Re-sourcing is idempotent and keeps the active transaction bookkeeping.
-source "$REPO_ROOT/bin/linux/shell-integration.sh"
+source "$REPO_ROOT/shell/bash/byok-cli-hub.bash"
 [[ "$FIRST_ONLY" == 'first:model-one' ]]
 [[ "$TEST_RESTORE" == 'first-plan' ]]
 

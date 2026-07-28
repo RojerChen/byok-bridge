@@ -14,8 +14,9 @@ BACKUP_DIR=""
 SHIM_TEMP=""
 SHIM_BACKUP=""
 SHELL_HELPER_PATH=""
-SHELL_HELPER_TEMP=""
-SHELL_HELPER_BACKUP=""
+LEGACY_SHELL_HELPER_PATH=""
+LEGACY_SHELL_HELPER_BACKUP=""
+LEGACY_SHELL_HELPER_OWNED=0
 BASH_RC_TARGET=""
 BASH_RC_TEMP=""
 BASH_RC_BACKUP=""
@@ -23,7 +24,6 @@ EXT_STAGING_DIR=""
 EXT_BACKUP_DIR=""
 SWITCHED_INSTALL=0
 SWITCHED_SHIM=0
-SWITCHED_SHELL_HELPER=0
 SWITCHED_BASH_RC=0
 SWITCHED_EXTENSION=0
 APP_VERSION=""
@@ -156,7 +156,8 @@ COPILOT_HOME_VALUE="${COPILOT_HOME:-$HOME/.copilot}"
 COPILOT_HOME_CANON="$(canonicalize_absolute 'COPILOT_HOME' "$COPILOT_HOME_VALUE")"
 TARGET_EXT_DIR="$(canonicalize_absolute 'extension-dir' "$COPILOT_HOME_CANON/extensions/byok-cli-hub-copilot")"
 SHIM_PATH="$TARGET_BIN_DIR/byok-cli-hub"
-SHELL_HELPER_PATH="$TARGET_BIN_DIR/byok-cli-hub-shell"
+SHELL_HELPER_PATH="$TARGET_INSTALL_DIR/shell/bash/byok-cli-hub.bash"
+LEGACY_SHELL_HELPER_PATH="$TARGET_BIN_DIR/byok-cli-hub-shell"
 BASH_RC_TARGET="$(realpath -m -- "$HOME/.bashrc")"
 assert_bashrc_target "$BASH_RC_TARGET"
 
@@ -190,7 +191,7 @@ fi
 if [[ "$SHOW_CHECK" -eq 1 ]]; then
   BASH_RC_INPUT="$BASH_RC_TARGET"
   [[ -f "$BASH_RC_INPUT" ]] || BASH_RC_INPUT='-'
-  node "$REPO_ROOT/bin/linux/bashrc-integration.mjs" check-install "$BASH_RC_INPUT" "$SHELL_HELPER_PATH"
+  node "$REPO_ROOT/libexec/linux/bash-profile-manager.mjs" check-install "$BASH_RC_INPUT" "$SHELL_HELPER_PATH" "$SHIM_PATH"
   echo "Preflight check complete; no files were written."
   [[ "$COPILOT_STATUS" -eq 0 ]] || exit 2
   exit 0
@@ -215,6 +216,7 @@ if [[ -f "$MANIFEST_PATH" ]]; then
     }
     for (const key of ["installDir", "dataDir", "binDir", "extensionDir", "withExtension", "bashrcPath", "shellStartupManaged"])
       process.stdout.write(String(m[key] ?? "") + "\n");
+    process.stdout.write(Array.isArray(m.managedFiles) && m.managedFiles.includes("byok-cli-hub-shell") ? "1\n" : "0\n");
   ' "$MANIFEST_PATH" "$APP_VERSION")" || die "Existing install manifest is invalid or belongs to a newer application version."
   mapfile -t PREVIOUS_FIELDS <<< "$PREVIOUS_VALUES"
   MANIFEST_INSTALL_DIR="$(canonicalize_absolute 'manifest installDir' "${PREVIOUS_FIELDS[0]}")"
@@ -246,7 +248,15 @@ if [[ -f "$MANIFEST_PATH" ]]; then
     assert_bashrc_target "$BASH_RC_TARGET"
   fi
   SHIM_PATH="$TARGET_BIN_DIR/byok-cli-hub"
-  SHELL_HELPER_PATH="$TARGET_BIN_DIR/byok-cli-hub-shell"
+  SHELL_HELPER_PATH="$TARGET_INSTALL_DIR/shell/bash/byok-cli-hub.bash"
+  LEGACY_SHELL_HELPER_PATH="$TARGET_BIN_DIR/byok-cli-hub-shell"
+  if [[ "${PREVIOUS_FIELDS[7]-}" == "1" ]]; then
+    if [[ -f "$LEGACY_SHELL_HELPER_PATH" ]] && grep -q '^# BYOK_CLI_HUB_MANAGED_SHELL_INTEGRATION=1$' "$LEGACY_SHELL_HELPER_PATH" 2>/dev/null; then
+      LEGACY_SHELL_HELPER_OWNED=1
+    elif [[ -e "$LEGACY_SHELL_HELPER_PATH" ]]; then
+      echo "[WARNING] Preserving unowned legacy shell integration helper: $LEGACY_SHELL_HELPER_PATH" >&2
+    fi
+  fi
   assert_safe_target 'data-dir' "$TARGET_DATA_DIR"
   assert_safe_target 'bin-dir' "$TARGET_BIN_DIR"
   assert_safe_target 'extension-dir' "$TARGET_EXT_DIR"
@@ -267,12 +277,13 @@ if [[ -e "$SHIM_PATH" ]] && ! grep -q '^# BYOK_CLI_HUB_MANAGED_SHIM=1$' "$SHIM_P
     die "Refusing to overwrite unowned shim: $SHIM_PATH"
   fi
 fi
-if [[ -e "$SHELL_HELPER_PATH" ]] && ! grep -q '^# BYOK_CLI_HUB_MANAGED_SHELL_INTEGRATION=1$' "$SHELL_HELPER_PATH" 2>/dev/null; then
-  die "Refusing to overwrite unowned shell integration helper: $SHELL_HELPER_PATH"
+if [[ "$ADOPT_LEGACY" -eq 1 && "$LEGACY_SHELL_HELPER_OWNED" -eq 0 && -f "$LEGACY_SHELL_HELPER_PATH" ]] \
+  && grep -q '^# BYOK_CLI_HUB_MANAGED_SHELL_INTEGRATION=1$' "$LEGACY_SHELL_HELPER_PATH" 2>/dev/null; then
+  LEGACY_SHELL_HELPER_OWNED=1
 fi
 BASH_RC_INPUT="$BASH_RC_TARGET"
 [[ -f "$BASH_RC_INPUT" ]] || BASH_RC_INPUT='-'
-node "$REPO_ROOT/bin/linux/bashrc-integration.mjs" check-install "$BASH_RC_INPUT" "$SHELL_HELPER_PATH"
+node "$REPO_ROOT/libexec/linux/bash-profile-manager.mjs" check-install "$BASH_RC_INPUT" "$SHELL_HELPER_PATH" "$SHIM_PATH"
 if [[ "$WITH_EXTENSION" -eq 1 && -e "$TARGET_EXT_DIR" && ! -f "$TARGET_EXT_DIR/.byok-cli-hub-managed" ]]; then
   if [[ "$ADOPT_LEGACY" -ne 1 || ! -f "$TARGET_EXT_DIR/extension.mjs" ]]; then
     die "Refusing to overwrite unowned extension: $TARGET_EXT_DIR"
@@ -305,11 +316,9 @@ rollback() {
     elif [[ "$SWITCHED_SHIM" -eq 1 ]]; then
       rm -f -- "$SHIM_PATH"
     fi
-    if [[ -n "$SHELL_HELPER_BACKUP" && -f "$SHELL_HELPER_BACKUP" ]]; then
-      rm -f -- "$SHELL_HELPER_PATH"
-      mv -- "$SHELL_HELPER_BACKUP" "$SHELL_HELPER_PATH"
-    elif [[ "$SWITCHED_SHELL_HELPER" -eq 1 ]]; then
-      rm -f -- "$SHELL_HELPER_PATH"
+    if [[ -n "$LEGACY_SHELL_HELPER_BACKUP" && -f "$LEGACY_SHELL_HELPER_BACKUP" ]]; then
+      rm -f -- "$LEGACY_SHELL_HELPER_PATH"
+      mv -- "$LEGACY_SHELL_HELPER_BACKUP" "$LEGACY_SHELL_HELPER_PATH"
     fi
     if [[ -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]]; then
       rm -rf -- "$TARGET_INSTALL_DIR"
@@ -332,7 +341,6 @@ rollback() {
   fi
   [[ -n "$STAGING_DIR" && -d "$STAGING_DIR" ]] && rm -rf -- "$STAGING_DIR"
   [[ -n "$SHIM_TEMP" && -f "$SHIM_TEMP" ]] && rm -f -- "$SHIM_TEMP"
-  [[ -n "$SHELL_HELPER_TEMP" && -f "$SHELL_HELPER_TEMP" ]] && rm -f -- "$SHELL_HELPER_TEMP"
   [[ -n "$BASH_RC_TEMP" && -f "$BASH_RC_TEMP" ]] && rm -f -- "$BASH_RC_TEMP"
   [[ -n "$EXT_STAGING_DIR" && -d "$EXT_STAGING_DIR" ]] && rm -rf -- "$EXT_STAGING_DIR"
   [[ -n "$DATA_EXAMPLE_BACKUP" && -f "$DATA_EXAMPLE_BACKUP" ]] && rm -f -- "$DATA_EXAMPLE_BACKUP"
@@ -391,20 +399,23 @@ STAGING_DIR="$(mktemp -d "$PARENT_INSTALL_DIR/.byok-cli-hub.staging.XXXXXX")"
 BACKUP_DIR="${TARGET_INSTALL_DIR}.backup.$$"
 SHIM_TEMP="$(mktemp "$TARGET_BIN_DIR/.byok-cli-hub.shim.XXXXXX")"
 SHIM_BACKUP="${SHIM_PATH}.backup.$$"
-SHELL_HELPER_TEMP="$(mktemp "$TARGET_BIN_DIR/.byok-cli-hub-shell.XXXXXX")"
-SHELL_HELPER_BACKUP="${SHELL_HELPER_PATH}.backup.$$"
+LEGACY_SHELL_HELPER_BACKUP="${LEGACY_SHELL_HELPER_PATH}.backup.$$"
 BASH_RC_TEMP="$(mktemp "$(dirname "$BASH_RC_TARGET")/.byok-cli-hub.bashrc.XXXXXX")"
 BASH_RC_BACKUP="${BASH_RC_TARGET}.byok-backup.$$"
 
 cp -R "$REPO_ROOT/manager" "$STAGING_DIR/"
 cp -R "$REPO_ROOT/config" "$STAGING_DIR/"
 cp -R "$REPO_ROOT/bin" "$STAGING_DIR/"
+cp -R "$REPO_ROOT/shell" "$STAGING_DIR/"
+cp -R "$REPO_ROOT/libexec" "$STAGING_DIR/"
 [[ ! -d "$REPO_ROOT/extension" ]] || cp -R "$REPO_ROOT/extension" "$STAGING_DIR/"
 find "$STAGING_DIR" -type d -exec chmod 755 {} +
 find "$STAGING_DIR" -type f -exec chmod 644 {} +
 chmod 755 "$STAGING_DIR/manager/manager.mjs" "$STAGING_DIR/bin/linux/"*.sh "$STAGING_DIR/bin/linux/byok-cli-hub"
 
 node --check "$STAGING_DIR/manager/manager.mjs"
+node --check "$STAGING_DIR/libexec/linux/bash-profile-manager.mjs"
+bash -n "$STAGING_DIR/shell/bash/byok-cli-hub.bash"
 node "$STAGING_DIR/manager/manager.mjs" --data-dir "$TARGET_DATA_DIR" --self-check
 
 INSTALL_Q="$(printf '%q' "$TARGET_INSTALL_DIR")"
@@ -418,15 +429,12 @@ exec $INSTALL_Q/bin/linux/run.sh "\$@"
 EOF
 chmod 755 "$SHIM_TEMP"
 
-cp "$REPO_ROOT/bin/linux/shell-integration.sh" "$SHELL_HELPER_TEMP"
-chmod 644 "$SHELL_HELPER_TEMP"
-
 BASH_RC_INPUT="$BASH_RC_TARGET"
 if [[ -f "$BASH_RC_INPUT" ]]; then
-  node "$REPO_ROOT/bin/linux/bashrc-integration.mjs" install "$BASH_RC_INPUT" "$BASH_RC_TEMP" "$SHELL_HELPER_PATH" >/dev/null
+  node "$REPO_ROOT/libexec/linux/bash-profile-manager.mjs" install "$BASH_RC_INPUT" "$BASH_RC_TEMP" "$SHELL_HELPER_PATH" "$SHIM_PATH" >/dev/null
   chmod --reference="$BASH_RC_INPUT" "$BASH_RC_TEMP"
 else
-  node "$REPO_ROOT/bin/linux/bashrc-integration.mjs" install - "$BASH_RC_TEMP" "$SHELL_HELPER_PATH" >/dev/null
+  node "$REPO_ROOT/libexec/linux/bash-profile-manager.mjs" install - "$BASH_RC_TEMP" "$SHELL_HELPER_PATH" "$SHIM_PATH" >/dev/null
   chmod 644 "$BASH_RC_TEMP"
 fi
 
@@ -453,7 +461,7 @@ node -e '
     withExtension: env.BYOK_MANIFEST_WITH_EXTENSION === "1",
     bashrcPath: env.BYOK_MANIFEST_BASHRC_PATH,
     shellStartupManaged: true,
-    managedFiles: ["byok-cli-hub", "byok-cli-hub-shell"]
+    managedFiles: ["byok-cli-hub"]
   }, null, 2) + "\n");
 ' > "$STAGING_DIR/$MANIFEST_NAME"
 chmod 644 "$STAGING_DIR/$MANIFEST_NAME"
@@ -481,19 +489,18 @@ mv -- "$SHIM_TEMP" "$SHIM_PATH"
 SHIM_TEMP=""
 SWITCHED_SHIM=1
 
-[[ ! -e "$SHELL_HELPER_BACKUP" ]] || die "Shell integration backup path already exists: $SHELL_HELPER_BACKUP"
-if [[ -f "$SHELL_HELPER_PATH" ]]; then mv -- "$SHELL_HELPER_PATH" "$SHELL_HELPER_BACKUP"; fi
-failure_point 'after-shell-helper-backup'
-mv -- "$SHELL_HELPER_TEMP" "$SHELL_HELPER_PATH"
-SHELL_HELPER_TEMP=""
-SWITCHED_SHELL_HELPER=1
-
 [[ ! -e "$BASH_RC_BACKUP" ]] || die "Bash startup backup path already exists: $BASH_RC_BACKUP"
 if [[ -f "$BASH_RC_TARGET" ]]; then mv -- "$BASH_RC_TARGET" "$BASH_RC_BACKUP"; fi
 failure_point 'after-bashrc-backup'
 mv -- "$BASH_RC_TEMP" "$BASH_RC_TARGET"
 BASH_RC_TEMP=""
 SWITCHED_BASH_RC=1
+
+if [[ "$LEGACY_SHELL_HELPER_OWNED" -eq 1 && -f "$LEGACY_SHELL_HELPER_PATH" ]]; then
+  [[ ! -e "$LEGACY_SHELL_HELPER_BACKUP" ]] || die "Legacy shell integration backup path already exists: $LEGACY_SHELL_HELPER_BACKUP"
+  mv -- "$LEGACY_SHELL_HELPER_PATH" "$LEGACY_SHELL_HELPER_BACKUP"
+  failure_point 'after-legacy-shell-helper-backup'
+fi
 
 if [[ "$WITH_EXTENSION" -eq 1 ]]; then
   [[ ! -e "$EXT_BACKUP_DIR" ]] || die "Extension backup path already exists: $EXT_BACKUP_DIR"
@@ -511,13 +518,12 @@ failure_point 'before-backup-cleanup'
 # after part of the previous installation has already been discarded.
 [[ ! -d "$BACKUP_DIR" ]] || rm -rf -- "$BACKUP_DIR" || echo "[WARNING] Could not remove backup: $BACKUP_DIR" >&2
 [[ ! -f "$SHIM_BACKUP" ]] || rm -f -- "$SHIM_BACKUP" || echo "[WARNING] Could not remove shim backup: $SHIM_BACKUP" >&2
-[[ ! -f "$SHELL_HELPER_BACKUP" ]] || rm -f -- "$SHELL_HELPER_BACKUP" || echo "[WARNING] Could not remove shell integration backup: $SHELL_HELPER_BACKUP" >&2
+[[ ! -f "$LEGACY_SHELL_HELPER_BACKUP" ]] || rm -f -- "$LEGACY_SHELL_HELPER_BACKUP" || echo "[WARNING] Could not remove legacy shell integration backup: $LEGACY_SHELL_HELPER_BACKUP" >&2
 [[ ! -f "$BASH_RC_BACKUP" ]] || rm -f -- "$BASH_RC_BACKUP" || echo "[WARNING] Could not remove Bash startup backup: $BASH_RC_BACKUP" >&2
 [[ -z "$EXT_BACKUP_DIR" || ! -d "$EXT_BACKUP_DIR" ]] || rm -rf -- "$EXT_BACKUP_DIR" || echo "[WARNING] Could not remove extension backup: $EXT_BACKUP_DIR" >&2
 [[ -z "$DATA_EXAMPLE_BACKUP" || ! -f "$DATA_EXAMPLE_BACKUP" ]] || rm -f -- "$DATA_EXAMPLE_BACKUP" || echo "[WARNING] Could not remove data backup: $DATA_EXAMPLE_BACKUP" >&2
 SWITCHED_INSTALL=0
 SWITCHED_SHIM=0
-SWITCHED_SHELL_HELPER=0
 SWITCHED_BASH_RC=0
 SWITCHED_EXTENSION=0
 DATA_DIR_CREATED=0
@@ -529,7 +535,7 @@ trap - EXIT INT TERM
 
 echo "[OK] Installed application snapshot to $TARGET_INSTALL_DIR"
 echo "[OK] Installed managed shim at $SHIM_PATH"
-echo "[OK] Installed sourceable shell integration at $SHELL_HELPER_PATH"
+echo "[OK] Installed sourceable shell integration in the application snapshot at $SHELL_HELPER_PATH"
 echo "[OK] Enabled automatic Bash startup integration in $BASH_RC_TARGET"
 [[ "$WITH_EXTENSION" -ne 1 ]] || echo "[OK] Installed managed extension at $TARGET_EXT_DIR"
 if [[ ":$PATH:" != *":$TARGET_BIN_DIR:"* ]]; then

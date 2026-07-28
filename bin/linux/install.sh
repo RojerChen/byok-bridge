@@ -13,10 +13,18 @@ STAGING_DIR=""
 BACKUP_DIR=""
 SHIM_TEMP=""
 SHIM_BACKUP=""
+SHELL_HELPER_PATH=""
+SHELL_HELPER_TEMP=""
+SHELL_HELPER_BACKUP=""
+BASH_RC_TARGET=""
+BASH_RC_TEMP=""
+BASH_RC_BACKUP=""
 EXT_STAGING_DIR=""
 EXT_BACKUP_DIR=""
 SWITCHED_INSTALL=0
 SWITCHED_SHIM=0
+SWITCHED_SHELL_HELPER=0
+SWITCHED_BASH_RC=0
 SWITCHED_EXTENSION=0
 APP_VERSION=""
 DATA_DIR_CREATED=0
@@ -130,6 +138,16 @@ assert_not_overlapping() {
   return 0
 }
 
+assert_bashrc_target() {
+  local target="$1"
+  case "$target" in
+    "$HOME_CANON"/*) ;;
+    *) die "Bash startup file must resolve inside the current home directory: $target" ;;
+  esac
+  [[ ! -e "$target" || -f "$target" ]] || die "Bash startup path is not a regular file: $target"
+  [[ -d "$(dirname "$target")" ]] || die "Bash startup parent directory does not exist: $(dirname "$target")"
+}
+
 XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 TARGET_INSTALL_DIR="$(canonicalize_absolute 'install-dir' "${INSTALL_DIR:-$XDG_DATA_HOME/byok-cli-hub}")"
 TARGET_DATA_DIR="$(canonicalize_absolute 'data-dir' "${DATA_DIR:-$HOME/.byok-cli-hub}")"
@@ -138,6 +156,9 @@ COPILOT_HOME_VALUE="${COPILOT_HOME:-$HOME/.copilot}"
 COPILOT_HOME_CANON="$(canonicalize_absolute 'COPILOT_HOME' "$COPILOT_HOME_VALUE")"
 TARGET_EXT_DIR="$(canonicalize_absolute 'extension-dir' "$COPILOT_HOME_CANON/extensions/byok-cli-hub-copilot")"
 SHIM_PATH="$TARGET_BIN_DIR/byok-cli-hub"
+SHELL_HELPER_PATH="$TARGET_BIN_DIR/byok-cli-hub-shell"
+BASH_RC_TARGET="$(realpath -m -- "$HOME/.bashrc")"
+assert_bashrc_target "$BASH_RC_TARGET"
 
 assert_safe_target 'install-dir' "$TARGET_INSTALL_DIR"
 assert_safe_target 'data-dir' "$TARGET_DATA_DIR"
@@ -156,6 +177,7 @@ echo "Resolved install dir: $TARGET_INSTALL_DIR"
 echo "Resolved data dir:    $TARGET_DATA_DIR"
 echo "Resolved bin dir:     $TARGET_BIN_DIR"
 echo "Resolved extension:   $TARGET_EXT_DIR"
+echo "Resolved Bash startup: $BASH_RC_TARGET"
 
 COPILOT_STATUS=0
 if command -v copilot >/dev/null 2>&1; then
@@ -166,6 +188,9 @@ else
 fi
 
 if [[ "$SHOW_CHECK" -eq 1 ]]; then
+  BASH_RC_INPUT="$BASH_RC_TARGET"
+  [[ -f "$BASH_RC_INPUT" ]] || BASH_RC_INPUT='-'
+  node "$REPO_ROOT/bin/linux/bashrc-integration.mjs" check-install "$BASH_RC_INPUT" "$SHELL_HELPER_PATH"
   echo "Preflight check complete; no files were written."
   [[ "$COPILOT_STATUS" -eq 0 ]] || exit 2
   exit 0
@@ -188,7 +213,7 @@ if [[ -f "$MANIFEST_PATH" ]]; then
       if (previousVersion[index] > sourceVersion[index]) process.exit(3);
       if (previousVersion[index] < sourceVersion[index]) break;
     }
-    for (const key of ["installDir", "dataDir", "binDir", "extensionDir", "withExtension"])
+    for (const key of ["installDir", "dataDir", "binDir", "extensionDir", "withExtension", "bashrcPath", "shellStartupManaged"])
       process.stdout.write(String(m[key] ?? "") + "\n");
   ' "$MANIFEST_PATH" "$APP_VERSION")" || die "Existing install manifest is invalid or belongs to a newer application version."
   mapfile -t PREVIOUS_FIELDS <<< "$PREVIOUS_VALUES"
@@ -214,7 +239,14 @@ if [[ -f "$MANIFEST_PATH" ]]; then
   TARGET_BIN_DIR="$MANIFEST_BIN_DIR"
   TARGET_EXT_DIR="$MANIFEST_EXT_DIR"
   [[ "${PREVIOUS_FIELDS[4]}" != "true" ]] || WITH_EXTENSION=1
+  if [[ -n "${PREVIOUS_FIELDS[5]-}" || -n "${PREVIOUS_FIELDS[6]-}" ]]; then
+    [[ "${PREVIOUS_FIELDS[6]-}" == "true" && -n "${PREVIOUS_FIELDS[5]-}" ]] \
+      || die "Existing install manifest has invalid Bash startup ownership metadata."
+    BASH_RC_TARGET="$(canonicalize_absolute 'manifest bashrcPath' "${PREVIOUS_FIELDS[5]}")"
+    assert_bashrc_target "$BASH_RC_TARGET"
+  fi
   SHIM_PATH="$TARGET_BIN_DIR/byok-cli-hub"
+  SHELL_HELPER_PATH="$TARGET_BIN_DIR/byok-cli-hub-shell"
   assert_safe_target 'data-dir' "$TARGET_DATA_DIR"
   assert_safe_target 'bin-dir' "$TARGET_BIN_DIR"
   assert_safe_target 'extension-dir' "$TARGET_EXT_DIR"
@@ -235,6 +267,12 @@ if [[ -e "$SHIM_PATH" ]] && ! grep -q '^# BYOK_CLI_HUB_MANAGED_SHIM=1$' "$SHIM_P
     die "Refusing to overwrite unowned shim: $SHIM_PATH"
   fi
 fi
+if [[ -e "$SHELL_HELPER_PATH" ]] && ! grep -q '^# BYOK_CLI_HUB_MANAGED_SHELL_INTEGRATION=1$' "$SHELL_HELPER_PATH" 2>/dev/null; then
+  die "Refusing to overwrite unowned shell integration helper: $SHELL_HELPER_PATH"
+fi
+BASH_RC_INPUT="$BASH_RC_TARGET"
+[[ -f "$BASH_RC_INPUT" ]] || BASH_RC_INPUT='-'
+node "$REPO_ROOT/bin/linux/bashrc-integration.mjs" check-install "$BASH_RC_INPUT" "$SHELL_HELPER_PATH"
 if [[ "$WITH_EXTENSION" -eq 1 && -e "$TARGET_EXT_DIR" && ! -f "$TARGET_EXT_DIR/.byok-cli-hub-managed" ]]; then
   if [[ "$ADOPT_LEGACY" -ne 1 || ! -f "$TARGET_EXT_DIR/extension.mjs" ]]; then
     die "Refusing to overwrite unowned extension: $TARGET_EXT_DIR"
@@ -249,6 +287,12 @@ rollback() {
   set +e
   if [[ "$status" -ne 0 ]]; then
     echo "[ERROR] Installation failed; restoring the previous installation." >&2
+    if [[ -n "$BASH_RC_BACKUP" && -f "$BASH_RC_BACKUP" ]]; then
+      rm -f -- "$BASH_RC_TARGET"
+      mv -- "$BASH_RC_BACKUP" "$BASH_RC_TARGET"
+    elif [[ "$SWITCHED_BASH_RC" -eq 1 ]]; then
+      rm -f -- "$BASH_RC_TARGET"
+    fi
     if [[ -n "$EXT_BACKUP_DIR" && -d "$EXT_BACKUP_DIR" ]]; then
       rm -rf -- "$TARGET_EXT_DIR"
       mv -- "$EXT_BACKUP_DIR" "$TARGET_EXT_DIR"
@@ -260,6 +304,12 @@ rollback() {
       mv -- "$SHIM_BACKUP" "$SHIM_PATH"
     elif [[ "$SWITCHED_SHIM" -eq 1 ]]; then
       rm -f -- "$SHIM_PATH"
+    fi
+    if [[ -n "$SHELL_HELPER_BACKUP" && -f "$SHELL_HELPER_BACKUP" ]]; then
+      rm -f -- "$SHELL_HELPER_PATH"
+      mv -- "$SHELL_HELPER_BACKUP" "$SHELL_HELPER_PATH"
+    elif [[ "$SWITCHED_SHELL_HELPER" -eq 1 ]]; then
+      rm -f -- "$SHELL_HELPER_PATH"
     fi
     if [[ -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]]; then
       rm -rf -- "$TARGET_INSTALL_DIR"
@@ -282,6 +332,8 @@ rollback() {
   fi
   [[ -n "$STAGING_DIR" && -d "$STAGING_DIR" ]] && rm -rf -- "$STAGING_DIR"
   [[ -n "$SHIM_TEMP" && -f "$SHIM_TEMP" ]] && rm -f -- "$SHIM_TEMP"
+  [[ -n "$SHELL_HELPER_TEMP" && -f "$SHELL_HELPER_TEMP" ]] && rm -f -- "$SHELL_HELPER_TEMP"
+  [[ -n "$BASH_RC_TEMP" && -f "$BASH_RC_TEMP" ]] && rm -f -- "$BASH_RC_TEMP"
   [[ -n "$EXT_STAGING_DIR" && -d "$EXT_STAGING_DIR" ]] && rm -rf -- "$EXT_STAGING_DIR"
   [[ -n "$DATA_EXAMPLE_BACKUP" && -f "$DATA_EXAMPLE_BACKUP" ]] && rm -f -- "$DATA_EXAMPLE_BACKUP"
   exit "$status"
@@ -339,6 +391,10 @@ STAGING_DIR="$(mktemp -d "$PARENT_INSTALL_DIR/.byok-cli-hub.staging.XXXXXX")"
 BACKUP_DIR="${TARGET_INSTALL_DIR}.backup.$$"
 SHIM_TEMP="$(mktemp "$TARGET_BIN_DIR/.byok-cli-hub.shim.XXXXXX")"
 SHIM_BACKUP="${SHIM_PATH}.backup.$$"
+SHELL_HELPER_TEMP="$(mktemp "$TARGET_BIN_DIR/.byok-cli-hub-shell.XXXXXX")"
+SHELL_HELPER_BACKUP="${SHELL_HELPER_PATH}.backup.$$"
+BASH_RC_TEMP="$(mktemp "$(dirname "$BASH_RC_TARGET")/.byok-cli-hub.bashrc.XXXXXX")"
+BASH_RC_BACKUP="${BASH_RC_TARGET}.byok-backup.$$"
 
 cp -R "$REPO_ROOT/manager" "$STAGING_DIR/"
 cp -R "$REPO_ROOT/config" "$STAGING_DIR/"
@@ -362,12 +418,25 @@ exec $INSTALL_Q/bin/linux/run.sh "\$@"
 EOF
 chmod 755 "$SHIM_TEMP"
 
+cp "$REPO_ROOT/bin/linux/shell-integration.sh" "$SHELL_HELPER_TEMP"
+chmod 644 "$SHELL_HELPER_TEMP"
+
+BASH_RC_INPUT="$BASH_RC_TARGET"
+if [[ -f "$BASH_RC_INPUT" ]]; then
+  node "$REPO_ROOT/bin/linux/bashrc-integration.mjs" install "$BASH_RC_INPUT" "$BASH_RC_TEMP" "$SHELL_HELPER_PATH" >/dev/null
+  chmod --reference="$BASH_RC_INPUT" "$BASH_RC_TEMP"
+else
+  node "$REPO_ROOT/bin/linux/bashrc-integration.mjs" install - "$BASH_RC_TEMP" "$SHELL_HELPER_PATH" >/dev/null
+  chmod 644 "$BASH_RC_TEMP"
+fi
+
 BYOK_MANIFEST_APP_VERSION="$APP_VERSION" \
 BYOK_MANIFEST_INSTALL_DIR="$TARGET_INSTALL_DIR" \
 BYOK_MANIFEST_DATA_DIR="$TARGET_DATA_DIR" \
 BYOK_MANIFEST_BIN_DIR="$TARGET_BIN_DIR" \
 BYOK_MANIFEST_EXTENSION_DIR="$TARGET_EXT_DIR" \
 BYOK_MANIFEST_WITH_EXTENSION="$WITH_EXTENSION" \
+BYOK_MANIFEST_BASHRC_PATH="$BASH_RC_TARGET" \
 MSYS2_ARG_CONV_EXCL='*' \
 MSYS_NO_PATHCONV=1 \
 node -e '
@@ -382,7 +451,9 @@ node -e '
     binDir: env.BYOK_MANIFEST_BIN_DIR,
     extensionDir: env.BYOK_MANIFEST_EXTENSION_DIR,
     withExtension: env.BYOK_MANIFEST_WITH_EXTENSION === "1",
-    managedFiles: ["byok-cli-hub"]
+    bashrcPath: env.BYOK_MANIFEST_BASHRC_PATH,
+    shellStartupManaged: true,
+    managedFiles: ["byok-cli-hub", "byok-cli-hub-shell"]
   }, null, 2) + "\n");
 ' > "$STAGING_DIR/$MANIFEST_NAME"
 chmod 644 "$STAGING_DIR/$MANIFEST_NAME"
@@ -410,6 +481,20 @@ mv -- "$SHIM_TEMP" "$SHIM_PATH"
 SHIM_TEMP=""
 SWITCHED_SHIM=1
 
+[[ ! -e "$SHELL_HELPER_BACKUP" ]] || die "Shell integration backup path already exists: $SHELL_HELPER_BACKUP"
+if [[ -f "$SHELL_HELPER_PATH" ]]; then mv -- "$SHELL_HELPER_PATH" "$SHELL_HELPER_BACKUP"; fi
+failure_point 'after-shell-helper-backup'
+mv -- "$SHELL_HELPER_TEMP" "$SHELL_HELPER_PATH"
+SHELL_HELPER_TEMP=""
+SWITCHED_SHELL_HELPER=1
+
+[[ ! -e "$BASH_RC_BACKUP" ]] || die "Bash startup backup path already exists: $BASH_RC_BACKUP"
+if [[ -f "$BASH_RC_TARGET" ]]; then mv -- "$BASH_RC_TARGET" "$BASH_RC_BACKUP"; fi
+failure_point 'after-bashrc-backup'
+mv -- "$BASH_RC_TEMP" "$BASH_RC_TARGET"
+BASH_RC_TEMP=""
+SWITCHED_BASH_RC=1
+
 if [[ "$WITH_EXTENSION" -eq 1 ]]; then
   [[ ! -e "$EXT_BACKUP_DIR" ]] || die "Extension backup path already exists: $EXT_BACKUP_DIR"
   if [[ -d "$TARGET_EXT_DIR" ]]; then mv -- "$TARGET_EXT_DIR" "$EXT_BACKUP_DIR"; fi
@@ -426,10 +511,14 @@ failure_point 'before-backup-cleanup'
 # after part of the previous installation has already been discarded.
 [[ ! -d "$BACKUP_DIR" ]] || rm -rf -- "$BACKUP_DIR" || echo "[WARNING] Could not remove backup: $BACKUP_DIR" >&2
 [[ ! -f "$SHIM_BACKUP" ]] || rm -f -- "$SHIM_BACKUP" || echo "[WARNING] Could not remove shim backup: $SHIM_BACKUP" >&2
+[[ ! -f "$SHELL_HELPER_BACKUP" ]] || rm -f -- "$SHELL_HELPER_BACKUP" || echo "[WARNING] Could not remove shell integration backup: $SHELL_HELPER_BACKUP" >&2
+[[ ! -f "$BASH_RC_BACKUP" ]] || rm -f -- "$BASH_RC_BACKUP" || echo "[WARNING] Could not remove Bash startup backup: $BASH_RC_BACKUP" >&2
 [[ -z "$EXT_BACKUP_DIR" || ! -d "$EXT_BACKUP_DIR" ]] || rm -rf -- "$EXT_BACKUP_DIR" || echo "[WARNING] Could not remove extension backup: $EXT_BACKUP_DIR" >&2
 [[ -z "$DATA_EXAMPLE_BACKUP" || ! -f "$DATA_EXAMPLE_BACKUP" ]] || rm -f -- "$DATA_EXAMPLE_BACKUP" || echo "[WARNING] Could not remove data backup: $DATA_EXAMPLE_BACKUP" >&2
 SWITCHED_INSTALL=0
 SWITCHED_SHIM=0
+SWITCHED_SHELL_HELPER=0
+SWITCHED_BASH_RC=0
 SWITCHED_EXTENSION=0
 DATA_DIR_CREATED=0
 DATA_MARKER_CREATED=0
@@ -440,8 +529,11 @@ trap - EXIT INT TERM
 
 echo "[OK] Installed application snapshot to $TARGET_INSTALL_DIR"
 echo "[OK] Installed managed shim at $SHIM_PATH"
+echo "[OK] Installed sourceable shell integration at $SHELL_HELPER_PATH"
+echo "[OK] Enabled automatic Bash startup integration in $BASH_RC_TARGET"
 [[ "$WITH_EXTENSION" -ne 1 ]] || echo "[OK] Installed managed extension at $TARGET_EXT_DIR"
 if [[ ":$PATH:" != *":$TARGET_BIN_DIR:"* ]]; then
   echo "[NOTICE] '$TARGET_BIN_DIR' is not in PATH. Add: export PATH=\"$TARGET_BIN_DIR:\$PATH\""
 fi
+echo "[INFO] Open a new Bash terminal or run 'exec bash' once; then use: byok-cli-hub"
 echo "BYOK CLI Hub successfully installed."

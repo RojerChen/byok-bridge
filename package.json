@@ -11,7 +11,8 @@
     "test:windows-installer": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/windows-installer.test.ps1",
     "test:powershell-http": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/powershell-http.test.ps1",
     "test:linux-installer": "bash tests/linux-installer.test.sh",
+    "test:linux-shell": "bash tests/linux-shell-integration.test.sh",
     "test:all:windows": "npm run test:node && npm run smoke && npm run test:powershell-http && npm run test:windows-installer",
-    "test:all:linux": "npm run test:node && npm run test:linux-installer"
+    "test:all:linux": "npm run test:node && npm run test:linux-shell && npm run test:linux-installer"
   }
 }

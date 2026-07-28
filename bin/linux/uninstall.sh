@@ -7,6 +7,8 @@ ASSUME_YES=0
 INSTALL_DIR=""
 DATA_DIR=""
 BIN_DIR=""
+SHELL_STARTUP_MANAGED=0
+BASH_RC_TARGET=""
 
 die() { echo "Error: $*" >&2; exit 1; }
 
@@ -82,6 +84,15 @@ assert_safe_target() {
   return 0
 }
 
+assert_bashrc_target() {
+  local target="$1"
+  case "$target" in
+    "$HOME_CANON"/*) ;;
+    *) die "Managed Bash startup file resolves outside the current home directory: $target" ;;
+  esac
+  [[ ! -e "$target" || -f "$target" ]] || die "Managed Bash startup path is not a regular file: $target"
+}
+
 XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 TARGET_INSTALL_DIR="$(canonicalize_absolute 'install-dir' "${INSTALL_DIR:-$XDG_DATA_HOME/byok-cli-hub}")"
 assert_safe_target 'install-dir' "$TARGET_INSTALL_DIR"
@@ -108,6 +119,14 @@ if [[ -f "$MANIFEST_PATH" ]]; then
   TARGET_EXT_DIR="$(canonicalize_absolute 'extension-dir' "$(manifest_value extensionDir)")"
   WITH_EXTENSION="$(manifest_value withExtension)"
   [[ "$WITH_EXTENSION" == "0" || "$WITH_EXTENSION" == "1" ]] || die "Install manifest extension ownership value is invalid."
+  SHELL_STARTUP_MANAGED="$(manifest_value shellStartupManaged)"
+  [[ -n "$SHELL_STARTUP_MANAGED" ]] || SHELL_STARTUP_MANAGED=0
+  [[ "$SHELL_STARTUP_MANAGED" == "0" || "$SHELL_STARTUP_MANAGED" == "1" ]] \
+    || die "Install manifest Bash startup ownership value is invalid."
+  if [[ "$SHELL_STARTUP_MANAGED" -eq 1 ]]; then
+    BASH_RC_TARGET="$(canonicalize_absolute 'manifest bashrcPath' "$(manifest_value bashrcPath)")"
+    assert_bashrc_target "$BASH_RC_TARGET"
+  fi
 else
   [[ "$FORCE_LEGACY" -eq 1 && -f "$TARGET_INSTALL_DIR/manager/manager.mjs" ]] \
     || die "No valid ownership manifest found. Refusing to remove '$TARGET_INSTALL_DIR'."
@@ -128,11 +147,37 @@ assert_not_overlapping 'install-dir' "$TARGET_INSTALL_DIR" 'extension-dir' "$TAR
 assert_not_overlapping 'data-dir' "$TARGET_DATA_DIR" 'extension-dir' "$TARGET_EXT_DIR"
 assert_not_overlapping 'bin-dir' "$TARGET_BIN_DIR" 'extension-dir' "$TARGET_EXT_DIR"
 SHIM_PATH="$TARGET_BIN_DIR/byok-cli-hub"
+SHELL_HELPER_PATH="$TARGET_BIN_DIR/byok-cli-hub-shell"
 
 echo "=== BYOK CLI Hub Uninstaller ==="
 echo "Resolved install dir: $TARGET_INSTALL_DIR"
 echo "Resolved data dir:    $TARGET_DATA_DIR"
 echo "Resolved shim:        $SHIM_PATH"
+echo "Resolved shell helper: $SHELL_HELPER_PATH"
+[[ "$SHELL_STARTUP_MANAGED" -ne 1 ]] || echo "Resolved Bash startup: $BASH_RC_TARGET"
+
+if [[ "$SHELL_STARTUP_MANAGED" -eq 1 ]]; then
+  if [[ -f "$BASH_RC_TARGET" ]]; then
+    BASH_RC_TEMP="$(mktemp "$(dirname "$BASH_RC_TARGET")/.byok-cli-hub.bashrc-remove.XXXXXX")"
+    BASH_RC_RESULT="$(node "$REPO_ROOT/bin/linux/bashrc-integration.mjs" remove "$BASH_RC_TARGET" "$BASH_RC_TEMP")" \
+      || { rm -f -- "$BASH_RC_TEMP"; die "Could not safely remove the managed Bash startup block."; }
+    read -r BASH_RC_CHANGED BASH_RC_REMOVE_FILE <<< "$BASH_RC_RESULT"
+    if [[ "$BASH_RC_CHANGED" == "1" ]]; then
+      if [[ "$BASH_RC_REMOVE_FILE" == "1" ]]; then
+        rm -f -- "$BASH_RC_TARGET" "$BASH_RC_TEMP"
+      else
+        chmod --reference="$BASH_RC_TARGET" "$BASH_RC_TEMP"
+        mv -f -- "$BASH_RC_TEMP" "$BASH_RC_TARGET"
+      fi
+      echo "[OK] Removed automatic Bash startup integration."
+    else
+      rm -f -- "$BASH_RC_TEMP"
+      echo "[INFO] Managed Bash startup block was already absent."
+    fi
+  else
+    echo "[INFO] Managed Bash startup file was already absent."
+  fi
+fi
 
 if [[ -f "$SHIM_PATH" ]]; then
   if grep -q '^# BYOK_CLI_HUB_MANAGED_SHIM=1$' "$SHIM_PATH" 2>/dev/null || [[ "$FORCE_LEGACY" -eq 1 ]]; then
@@ -140,6 +185,17 @@ if [[ -f "$SHIM_PATH" ]]; then
     echo "[OK] Removed managed shim."
   else
     echo "[WARNING] Preserved unowned shim: $SHIM_PATH" >&2
+  fi
+fi
+
+SHELL_HELPER_REMOVED=0
+if [[ -f "$SHELL_HELPER_PATH" ]]; then
+  if grep -q '^# BYOK_CLI_HUB_MANAGED_SHELL_INTEGRATION=1$' "$SHELL_HELPER_PATH" 2>/dev/null || [[ "$FORCE_LEGACY" -eq 1 ]]; then
+    rm -f -- "$SHELL_HELPER_PATH"
+    SHELL_HELPER_REMOVED=1
+    echo "[OK] Removed managed shell integration helper."
+  else
+    echo "[WARNING] Preserved unowned shell integration helper: $SHELL_HELPER_PATH" >&2
   fi
 fi
 
@@ -179,3 +235,6 @@ else
 fi
 
 echo "BYOK CLI Hub uninstalled successfully."
+if [[ "$SHELL_HELPER_REMOVED" -eq 1 ]]; then
+  echo "[NOTICE] If shell integration is active in this terminal, run byok-cli-hub-shell-unload or close the terminal."
+fi

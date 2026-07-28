@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is intentionally simple and follows a lightweight `Keep a Changelog` style.
 
+## [0.0.3] - 2026-07-29
+
+### Added
+
+- Linux/WSL Bash integration that applies the dynamically resolved Node launch environment to the current shell, launches the configured CLI, and retains the values until the next plan, deactivation, or terminal close.
+- Versioned FD 3 shell-plan protocol, strict hex data parsing, caller-environment transaction/rollback, provider-switch cleanup, original-value restoration, and `byok-cli-hub-deactivate`/`byok-cli-hub-shell-unload` helpers.
+- Managed installer ownership and rollback for the sourceable `byok-cli-hub-shell` helper and automatic `~/.bashrc` startup block, plus Node, Bash session, xtrace, malformed-protocol, and installer regression coverage.
+
+### Security
+
+- The managed `.bashrc` block contains only a fixed helper path and restoration metadata—never provider/model/API-key values. Shell integration uses no `eval` or secret-bearing regular temp file, rejects unsafe parent-shell variables, and keeps unredacted plan data off stdout/stderr. Explicit executable mode remains child-only.
+
 ## [0.0.2] - 2026-07-24
 
 ### Added

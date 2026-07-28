@@ -1,8 +1,8 @@
 # BYOK CLI Hub
 
-BYOK CLI Hub selects a provider and model, builds a configuration-driven environment, and launches an AI CLI as a child process. Provider credentials are passed directly to that child process; they are not written to config/state/cache files or persisted in the caller's shell.
+BYOK CLI Hub selects a provider and model, builds a configuration-driven environment, and launches an AI CLI. On Linux/WSL, the installer enables a managed Bash function so a bare `byok-cli-hub` command retains the resolved BYOK environment in the current shell session. The underlying executable remains available in isolated child-only mode. Credentials are never written to config/state/cache or shell startup files.
 
-Current version: `0.0.2`
+Current version: `0.0.3`
 
 ## Supported CLIs
 
@@ -25,6 +25,7 @@ Linux / WSL2:
 
 - Bash, `realpath`, and Node.js 22 or later.
 - GitHub Copilot CLI in `PATH`.
+- The managed caller-shell integration requires Bash 4.2 or later.
 
 Providers normally expose an OpenAI-compatible `/models` API. API keys should be supplied through environment variables or the secure interactive prompt, never stored in `providers.json`.
 
@@ -53,7 +54,7 @@ The Copilot extension is opt-in:
 bin\win\install.cmd -WithExtension
 ```
 
-The public Windows `0.0.1` layout is detected and migrated automatically. Its existing Copilot extension is treated as the user's enabled choice and becomes managed by `0.0.2`. For any other recognizable pre-manifest extension, inspect it first and explicitly opt in to adoption:
+The public Windows `0.0.1` layout is detected and migrated automatically. Its existing Copilot extension is treated as the user's enabled choice and becomes managed by the current installer. For any other recognizable pre-manifest extension, inspect it first and explicitly opt in to adoption:
 
 ```bat
 bin\win\install.cmd -WithExtension -AdoptLegacy
@@ -76,6 +77,8 @@ Default locations:
 | Application snapshot | `${XDG_DATA_HOME:-$HOME/.local/share}/byok-cli-hub` |
 | User data | `$HOME/.byok-cli-hub` |
 | Command shim | `$HOME/.local/bin/byok-cli-hub` |
+| Sourceable shell helper | `$HOME/.local/bin/byok-cli-hub-shell` |
+| Managed Bash startup block | `$HOME/.bashrc` |
 | Optional extension | `${COPILOT_HOME:-$HOME/.copilot}/extensions/byok-cli-hub-copilot` |
 
 Custom paths must be absolute, safe, and non-overlapping:
@@ -87,21 +90,35 @@ bash bin/linux/install.sh \
   --bin-dir "$HOME/.local/bin"
 ```
 
-The resolved data directory is recorded in the managed install manifest and exported by the generated shim as `BYOK_CLI_HUB_DATA_DIR`, so the Manager and extension read the same state/cache. Application, shim, extension, and installer-created data changes are rolled back together if a later validation or switch step fails.
+The resolved data directory is recorded in the managed install manifest and exported by the generated shim as `BYOK_CLI_HUB_DATA_DIR`, so the Manager and extension read the same state/cache. Application, shim, shell helper, managed `.bashrc` block, extension, and installer-created data changes are rolled back together if a later validation or switch step fails.
+
+The installer adds an owned, non-secret block to `~/.bashrc`. Open a new WSL/Bash terminal after installation, or replace the current shell once:
+
+```bash
+exec bash
+byok-cli-hub
+
+# Later, restore/unset variables managed by the active BYOK plan:
+byok-cli-hub-deactivate
+```
+
+The startup block only loads fixed Bash functions; it does not store or resolve provider/model/API-key values. Provider selection and prompting still happen each time `byok-cli-hub` is called. The final values are returned by Node over a private anonymous file descriptor, validated as data, exported by the function, and then used to launch the CLI. No `eval` or secret-bearing temporary file is used. Run `command byok-cli-hub` or the shim's absolute path to bypass the function and use isolated child-only mode. Repo mode can source `bin/linux/shell-integration.sh` manually.
+
+The managed startup block contains original-file restoration metadata, while its path and ownership are recorded in the install manifest. Both are updated transactionally, and the uninstaller removes the block without removing unrelated `.bashrc` content. It does not preserve provider/model/API-key values across terminals. API keys retained in a caller shell can be inherited by other programs subsequently launched from that shell; use child-only mode when that wider session scope is not desired.
 
 Use `--check` to validate prerequisites and paths without writing files. Upgrading a recognizable installation made before ownership manifests requires the explicit `--adopt-legacy` option.
 
 ## Distribution and upgrades
 
-This project is distributed as source; `0.0.2` does not introduce an MSI, DEB/RPM, global npm package, or automatic updater.
+This project continues to be distributed as source in `0.0.3`; it does not provide an MSI, DEB/RPM, global npm package, or automatic updater.
 
 Repo mode means running `bin\win\run.cmd` or `bin/linux/run.sh` directly from a clone. Upgrade by running `git pull` or checking out a newer release tag. Repo mode does not copy an application snapshot or modify `PATH`, so it has no separate uninstall step.
 
-Installed mode means running the installer from downloaded or cloned release source. Upgrade by obtaining the newer source and rerunning that version's installer. The installer replaces only its managed application snapshot, shim/`PATH` entry, manifest, and optional managed extension; user config, state, and cache remain in the data directory. Use the installed uninstaller for removal.
+Installed mode means running the installer from downloaded or cloned release source. Upgrade by obtaining the newer source and rerunning that version's installer. The installer replaces only its managed application snapshot, shim/shell-helper entries, `.bashrc` block, manifest, and optional managed extension; user config, state, and cache remain in the data directory. Use the installed uninstaller for removal.
 
 A managed update must keep the data, shim, and extension paths recorded by the existing manifest. Windows rejects a different `BYOK_CLI_HUB_DATA_DIR` or `COPILOT_HOME`; Linux rejects different `--data-dir` or `--bin-dir` values. To relocate these paths without leaving orphaned managed files, uninstall first and then reinstall with the new locations.
 
-For a Windows `0.0.1` upgrade, run the `0.0.2` Windows installer normally. It validates the legacy config before creating `%USERPROFILE%\.byok-cli-hub\providers.json`, moves the application to `%LOCALAPPDATA%\byok-cli-hub\app`, migrates the user `PATH`, preserves state/cache and the original legacy config, and adopts a recognizable legacy extension. Unknown extension content is preserved without taking ownership. If validation or any switch step fails, the old launcher, extension, files, and original `PATH` are restored.
+For a Windows `0.0.1` upgrade, run the current Windows installer normally. It validates the legacy config before creating `%USERPROFILE%\.byok-cli-hub\providers.json`, moves the application to `%LOCALAPPDATA%\byok-cli-hub\app`, migrates the user `PATH`, preserves state/cache and the original legacy config, and adopts a recognizable legacy extension. Unknown extension content is preserved without taking ownership. If validation or any switch step fails, the old launcher, extension, files, and original `PATH` are restored.
 
 Linux/WSL support is first released in `0.0.2`; there is no public Linux `0.0.1` migration contract. Windows and each Linux/WSL distro are independent installations with separate default data directories.
 
@@ -197,7 +214,7 @@ byok-cli-hub --provider my-provider -- --additional-cli-argument
 
 `--dry-run` / `-DryRun` does not fetch models, update cache/state, or launch a child. It prints a redacted execution plan. Refresh updates cache/state and returns without launching the CLI.
 
-There is intentionally no shell `eval`/`source` export mode. Secrets are passed directly through the child process environment and redacted as `[set]` in output.
+The underlying executable never modifies its caller's environment. The installed Linux/WSL Bash integration sources fixed, version-controlled function code, then receives the resolved plan as strictly parsed data over a private file descriptor. It never evaluates generated shell code. Secrets are redacted as `[set]` in human-readable output.
 
 ## Switching models in Copilot
 
@@ -237,7 +254,7 @@ bash bin/linux/uninstall.sh --purge-data
 bash bin/linux/uninstall.sh --purge-data --yes
 ```
 
-The uninstaller reads the managed manifest, removes only owned shim/extension paths, and preserves user data by default. A pre-manifest install requires `--force-legacy` and recognizable BYOK CLI Hub files.
+The uninstaller reads the managed manifest, removes only the owned application snapshot, shim, shell helper, optional extension, and managed `.bashrc` block, and preserves unrelated `.bashrc` content and user data by default. A pre-manifest install requires `--force-legacy` and recognizable BYOK CLI Hub files. Functions already loaded in the current terminal remain available until you run `byok-cli-hub-shell-unload` or close that terminal.
 
 Neither uninstaller removes GitHub Copilot CLI or any other separately installed AI CLI.
 
@@ -257,12 +274,13 @@ npm run test:windows-installer
 npm run test:all:windows
 
 # Linux installer or aggregate suite:
+npm run test:linux-shell
 npm run test:linux-installer
 npm run test:all:linux
 ```
 
-`npm test` is platform-aware: Windows runs Node, PowerShell smoke/HTTP, and Windows installer suites; Linux runs Node and Linux installer suites. A current Windows run contains 20 Node/cross-runtime assertions in addition to the PowerShell and installer suites. The Windows and Ubuntu jobs in `.github/workflows/test.yml` run this same entry point in CI.
+`npm test` is platform-aware: Windows runs Node, PowerShell smoke/HTTP, and Windows installer suites; Linux runs Node, caller-shell integration, and Linux installer suites. A current Windows run contains 22 Node/cross-runtime assertions in addition to the PowerShell and installer suites. The Windows and Ubuntu jobs in `.github/workflows/test.yml` run this same entry point in CI.
 
-The tests cover the shared Node/PowerShell config contract (including strict scalar types and Windows command-path variants), damaged-file preservation, endpoint-scoped cache freshness, bounded HTTP reads and stalled-body deadlines, empty model arrays, header-injection rejection and API-key-safe errors, strict arguments, redaction, side-effect-free dry-run, active and abandoned cross-runtime locks, Windows `0.0.1` migration and rollback, managed-path relocation guards, and Windows/Linux data-aware installation transactions. Linux failure injection explicitly verifies example-backup copy failure plus marker/config `chmod` failure using byte-level SHA-256 data-tree snapshots.
+The tests cover the shared Node/PowerShell config contract (including strict scalar types and Windows command-path variants), damaged-file preservation, endpoint-scoped cache freshness, bounded HTTP reads and stalled-body deadlines, empty model arrays, header-injection rejection and API-key-safe errors, strict arguments, redaction, side-effect-free dry-run, active and abandoned cross-runtime locks, caller-shell environment apply/switch/deactivate behavior, FD protocol validation, xtrace redaction, Windows `0.0.1` migration and rollback, managed-path relocation guards, and Windows/Linux data-aware installation transactions. Linux failure injection also verifies shell-helper ownership/rollback, example-backup copy failure, and marker/config `chmod` failure.
 
 The completed `0.0.2` review and remediation record is in [`doc/improve_0.0.2.md`](doc/improve_0.0.2.md).

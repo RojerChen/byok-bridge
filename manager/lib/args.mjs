@@ -12,7 +12,8 @@ const VALUE_OPTIONS = new Map([
   ['--base-url', 'baseUrl'],
   ['--api-key', 'apiKey'],
   ['--model', 'model'],
-  ['--data-dir', 'dataDir']
+  ['--data-dir', 'dataDir'],
+  ['--internal-shell-plan-fd', 'internalShellPlanFd']
 ]);
 
 const FLAG_OPTIONS = new Map([
@@ -33,6 +34,7 @@ export function parseArgs(argv) {
     selfCheck: false,
     help: false,
     dataDir: null,
+    internalShellPlanFd: null,
     passthroughArgs: []
   };
   const seen = new Set();
@@ -76,10 +78,14 @@ export function parseArgs(argv) {
     throw new UsageError(`Unknown option '${arg}'. Use --help for usage.`);
   }
 
-  if (options.help && seen.size > 1) throw new UsageError('--help cannot be combined with other options.');
+  if (options.internalShellPlanFd !== null && options.internalShellPlanFd !== '3') {
+    throw new UsageError("Option '--internal-shell-plan-fd' only accepts the internal descriptor 3.");
+  }
+  const semanticSeen = [...seen].filter(option => option !== 'internalShellPlanFd');
+  if (options.help && semanticSeen.length > 1) throw new UsageError('--help cannot be combined with other options.');
   if (options.selfCheck) {
     const selfCheckOptions = new Set(['selfCheck', 'dataDir']);
-    const hasLaunchOption = [...seen].some((option) => !selfCheckOptions.has(option));
+    const hasLaunchOption = semanticSeen.some((option) => !selfCheckOptions.has(option));
     if (hasLaunchOption || options.passthroughArgs.length > 0) {
       throw new UsageError('--self-check cannot be combined with launch options.');
     }

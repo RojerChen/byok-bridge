@@ -13,6 +13,7 @@ import { expandTemplateValue, resolveCliArgs, buildRuntimeEnvMap, resolveChosenM
 import { fetchModels, getSafeModelFetchErrorMessage } from './lib/http.mjs';
 import { launchCli } from './lib/launcher.mjs';
 import { parseArgs, UsageError } from './lib/args.mjs';
+import { encodeShellPlan, ShellPlanError } from './lib/shell-plan.mjs';
 import { readState as readExtensionState, updateState as updateExtensionState } from '../extension/lib/shared.mjs';
 
 describe('BYOK CLI Hub Node Manager Unit & Integration Tests', () => {
@@ -242,8 +243,88 @@ describe('BYOK CLI Hub Node Manager Unit & Integration Tests', () => {
     const selfCheck = parseArgs(['--data-dir', '/tmp/byok-test', '--self-check']);
     assert.equal(selfCheck.selfCheck, true);
     assert.equal(selfCheck.dataDir, '/tmp/byok-test');
+    assert.equal(parseArgs(['--internal-shell-plan-fd', '3', '--help']).internalShellPlanFd, '3');
+    assert.throws(() => parseArgs(['--internal-shell-plan-fd', '1']), UsageError);
     assert.throws(() => parseArgs(['--self-check', '--provider', 'local']), UsageError);
     assert.deepEqual(parseArgs(['--cli', 'copilot', '--', '--verbose']).passthroughArgs, ['--verbose']);
+  });
+
+  test('Shell plan protocol encodes data without emitting executable shell syntax', () => {
+    const payload = encodeShellPlan({
+      action: 'launch',
+      command: 'copilot',
+      args: ['', 'space value', '$(not-executed)', '繁體中文'],
+      environment: {
+        TEST_EMPTY: '',
+        TEST_SECRET: 'line one\nline two\t$`"',
+        TEST_BOOLEAN: false,
+        TEST_NUMBER: 0
+      }
+    });
+    assert.match(payload, /^BYOK_CLI_HUB_SHELL_PLAN\t1\nACTION\tlaunch\n/);
+    assert.ok(payload.includes(`ENV\tTEST_SECRET\t${Buffer.from('line one\nline two\t$`"').toString('hex')}\n`));
+    assert.ok(payload.includes(`ARG\t${Buffer.from('$(not-executed)').toString('hex')}\n`));
+    assert.doesNotMatch(payload, /export|line one|not-executed/);
+    assert.throws(() => encodeShellPlan({ action: 'launch', command: 'x', args: [], environment: { PATH: '/tmp' } }), ShellPlanError);
+    assert.throws(() => encodeShellPlan({ action: 'launch', command: 'x', args: [], environment: { _BYOK_CLI_HUB_TEST: 'x' } }), ShellPlanError);
+    assert.throws(() => encodeShellPlan({ action: 'launch', command: 'x\0y', args: [], environment: {} }), ShellPlanError);
+    assert.equal(encodeShellPlan({ action: 'none' }), 'BYOK_CLI_HUB_SHELL_PLAN\t1\nACTION\tnone\nEND\t1\n');
+  });
+
+  test('Manager emits a resolved launch plan on FD 3 without launching the CLI', () => {
+    const config = {
+      version: 1,
+      clis: {
+        test: {
+          command: process.execPath,
+          args: ['--version'],
+          environment: {
+            TEST_URL: '{url}',
+            TEST_KEY: '{api_key}',
+            TEST_MODEL: '{model}'
+          }
+        }
+      },
+      providers: {
+        static: {
+          baseUrl: 'https://example.test/v1',
+          apiKeyEnv: ['TEST_KEY'],
+          models: ['model-a'],
+          environment: { TEST_PROVIDER: '{provider_id}' }
+        }
+      }
+    };
+    writeJsonAtomic(path.join(tmpDir, 'providers.json'), config);
+    const managerPath = fileURLToPath(new URL('./manager.mjs', import.meta.url));
+    const result = spawnSync(process.execPath, [
+      managerPath,
+      '--internal-shell-plan-fd', '3',
+      '--data-dir', tmpDir,
+      '--cli', 'test',
+      '--provider', 'static',
+      '--model', 'model-a',
+      '--api-key', 'shell-secret'
+    ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe', 'pipe'] });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.output[3], /^BYOK_CLI_HUB_SHELL_PLAN\t1\nACTION\tlaunch\n/);
+    assert.ok(result.output[3].includes(`ENV\tTEST_KEY\t${Buffer.from('shell-secret').toString('hex')}\n`));
+    assert.ok(result.output[3].includes(`COMMAND\t${Buffer.from(process.execPath).toString('hex')}\n`));
+    assert.match(result.stdout, /TEST_KEY=\[set\]/);
+    assert.doesNotMatch(result.stdout + result.stderr, /shell-secret/);
+    assert.doesNotMatch(result.stdout, /v\d+\.\d+\.\d+/);
+
+    const dryRun = spawnSync(process.execPath, [
+      managerPath,
+      '--internal-shell-plan-fd', '3',
+      '--data-dir', tmpDir,
+      '--cli', 'test',
+      '--provider', 'static',
+      '--model', 'model-a',
+      '--dry-run'
+    ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe', 'pipe'] });
+    assert.equal(dryRun.status, 0, dryRun.stderr || dryRun.stdout);
+    assert.equal(dryRun.output[3], 'BYOK_CLI_HUB_SHELL_PLAN\t1\nACTION\tnone\nEND\t1\n');
   });
 
   test('Config validation reports JSON paths and preserves a damaged user config', () => {

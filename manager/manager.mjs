@@ -24,7 +24,8 @@ import {
 import { parseArgs, UsageError } from './lib/args.mjs';
 import { fetchModels, getSafeModelFetchErrorMessage } from './lib/http.mjs';
 import { readMaskedPrompt, readInput, selectMenuItem } from './lib/prompt.mjs';
-import { launchCli } from './lib/launcher.mjs';
+import { isExecutableInPath, launchCli } from './lib/launcher.mjs';
+import { writeShellPlan } from './lib/shell-plan.mjs';
 
 function printHelp() {
   console.log(`
@@ -54,7 +55,7 @@ async function runSelfCheck(dataDir) {
   const majorVersion = parseInt(process.versions.node.split('.')[0], 10);
   if (majorVersion < 22) {
     console.error(`[SELF-CHECK] Error: Node.js version >= 22 is required. Current version: ${process.version}`);
-    process.exit(1);
+    return 1;
   }
   console.log(`[SELF-CHECK] Node.js version: ${process.version} (OK)`);
 
@@ -66,11 +67,17 @@ async function runSelfCheck(dataDir) {
     console.log(`[SELF-CHECK] Configured Providers: ${config.providers.map(p => p.id).join(', ')}`);
   } catch (err) {
     console.error(`[SELF-CHECK] Config Error: ${err.message}`);
-    process.exit(1);
+    return 1;
   }
 
   console.log('[SELF-CHECK] All preflight checks passed.');
-  process.exit(0);
+  return 0;
+}
+
+function emitShellPlan(options, plan) {
+  if (options.internalShellPlanFd !== null) {
+    writeShellPlan(Number(options.internalShellPlanFd), plan);
+  }
 }
 
 async function invokeAddProviderFlow(selectedCli, dataDir) {
@@ -114,13 +121,15 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
     printHelp();
-    return;
+    emitShellPlan(options, { action: 'none' });
+    return 0;
   }
   const dataDir = getByokDataDir(options.dataDir);
 
   if (options.selfCheck) {
-    await runSelfCheck(dataDir);
-    return;
+    const exitCode = await runSelfCheck(dataDir);
+    if (exitCode === 0) emitShellPlan(options, { action: 'none' });
+    return exitCode;
   }
 
   const config = loadProviderConfig(dataDir, { initialize: !options.dryRun });
@@ -334,20 +343,46 @@ async function main() {
 
   if (options.refresh) {
     console.log('Model cache refresh complete.');
-    return;
+    emitShellPlan(options, { action: 'none' });
+    return 0;
   }
 
   // --- 8. Launch CLI ------------------------------------------------------
   const command = selectedCli.command || 'copilot';
+  if (options.dryRun) {
+    const exitCode = await launchCli(command, resolvedLaunchArgs, envMap, {
+      dryRun: true,
+      sensitiveKeys
+    });
+    emitShellPlan(options, { action: 'none' });
+    return exitCode;
+  }
+
+  if (options.internalShellPlanFd !== null) {
+    if (!isExecutableInPath(command)) {
+      console.error(`Error: The command '${command}' was not found in PATH.`);
+      console.error(`Please ensure '${command}' is installed and accessible in your environment.`);
+      return 5;
+    }
+    emitShellPlan(options, {
+      action: 'launch',
+      command,
+      args: resolvedLaunchArgs,
+      environment: envMap
+    });
+    return 0;
+  }
+
   const exitCode = await launchCli(command, resolvedLaunchArgs, envMap, {
-    dryRun: options.dryRun,
+    dryRun: false,
     sensitiveKeys
   });
-
-  process.exit(exitCode);
+  return exitCode;
 }
 
-main().catch(err => {
+main().then(exitCode => {
+  process.exitCode = exitCode ?? 0;
+}).catch(err => {
   console.error(`${err instanceof UsageError ? 'Usage error' : 'Manager error'}: ${err.message}`);
-  process.exit(err.exitCode || 1);
+  process.exitCode = err.exitCode || 1;
 });

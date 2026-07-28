@@ -74,9 +74,17 @@ export function buildRuntimeEnvMap(provider, baseUrl, model, apiKey, providerId,
     }
   }
 
-  // 3. Provider CLI-specific overrides (provider.environment[cli.id])
-  if (provider?.environment && cli?.id && provider.environment[cli.id] && typeof provider.environment[cli.id] === 'object') {
-    for (const [k, v] of Object.entries(provider.environment[cli.id])) {
+  // 3. Provider-wide environment, followed by CLI-specific overrides
+  if (provider?.environment && typeof provider.environment === 'object') {
+    for (const [k, v] of Object.entries(provider.environment)) {
+      if (v === null || typeof v === 'object') continue;
+      map[k] = expandTemplateValue(v, subs);
+    }
+  }
+
+  const cliOverrides = provider?.environment && cli?.id ? provider.environment[cli.id] : null;
+  if (cliOverrides && typeof cliOverrides === 'object' && !Array.isArray(cliOverrides)) {
+    for (const [k, v] of Object.entries(cliOverrides)) {
       if (k && typeof k === 'string') {
         map[k.trim()] = expandTemplateValue(v, subs);
       }

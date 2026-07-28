@@ -91,13 +91,18 @@ try {
     $overrideProvider = [pscustomobject][ordered]@{
         name = 'Override'
         environment = [pscustomobject][ordered]@{
+            'PROVIDER_WIDE_VALUE' = '{provider_id}:{model}'
+            'OVERRIDE_ORDER' = 'provider-wide'
             copilot = [pscustomobject][ordered]@{
                 'COPILOT_PROVIDER_MAX_PROMPT_TOKENS' = '32768'
                 'COPILOT_PROVIDER_MAX_OUTPUT_TOKENS' = '32768'
+                'OVERRIDE_ORDER' = 'cli-specific'
             }
         }
     }
     $overrideMap = Build-ByokRuntimeEnvMap $overrideProvider 'https://override/v1' 'm3' 'sk-override' 'override' $copilotCli
+    if ($overrideMap.PROVIDER_WIDE_VALUE -ne 'override:m3') { throw "provider-wide env mismatch" }
+    if ($overrideMap.OVERRIDE_ORDER -ne 'cli-specific') { throw "CLI-specific env did not override provider-wide env" }
     if ($overrideMap.COPILOT_PROVIDER_MAX_PROMPT_TOKENS -ne '32768') { throw "override prompt tokens mismatch" }
     if ($overrideMap.COPILOT_PROVIDER_MAX_OUTPUT_TOKENS -ne '32768') { throw "override output tokens mismatch" }
 

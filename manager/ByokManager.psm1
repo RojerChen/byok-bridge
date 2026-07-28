@@ -333,9 +333,19 @@ function Assert-ByokProviderConfig {
         }
         if (Test-ByokHasProperty $provider 'environment') {
             if (-not (Test-ByokJsonObject $provider.environment)) { throw "Invalid provider config at $basePath.environment: object required." }
-            foreach ($override in (Get-ByokObjectEntries $provider.environment)) {
-                if ($override.Name -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') { throw "Invalid provider config at $basePath.environment.$($override.Name): invalid CLI id." }
-                Assert-ByokEnvMap $override.Value "$basePath.environment.$($override.Name)"
+            foreach ($entry in (Get-ByokObjectEntries $provider.environment)) {
+                $entryPath = "$basePath.environment.$($entry.Name)"
+                if (Test-ByokJsonObject $entry.Value) {
+                    if ($entry.Name -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') { throw "Invalid provider config at ${entryPath}: invalid CLI id." }
+                    Assert-ByokEnvMap $entry.Value $entryPath
+                } else {
+                    if ($entry.Name -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') { throw "Invalid provider config at ${entryPath}: invalid environment variable name." }
+                    $value = $entry.Value
+                    $allowedScalar = $value -is [string] -or $value -is [bool] -or (Test-ByokJsonNumber $value)
+                    if (-not $allowedScalar) {
+                        throw "Invalid provider config at ${entryPath}: template value must be scalar (string, number, or boolean) or a CLI-specific environment object."
+                    }
+                }
             }
         }
         if (Test-ByokHasProperty $provider 'settings') { Assert-ByokEnvMap $provider.settings "$basePath.settings" }
@@ -601,6 +611,16 @@ function Get-ByokProviderCliOverrides {
     return $null
 }
 
+function Get-ByokProviderEnvironmentMap {
+    param($Provider)
+    if (-not $Provider -or -not $Provider.environment) { return $null }
+    $map = [ordered]@{}
+    foreach ($property in (Get-ByokObjectEntries $Provider.environment)) {
+        if (-not (Test-ByokJsonObject $property.Value)) { $map[$property.Name] = $property.Value }
+    }
+    return $map
+}
+
 function Expand-ByokTemplateValue {
     param([string]$Value, $Substitutions)
     if ($null -eq $Value) { return $null }
@@ -670,6 +690,17 @@ function Build-ByokRuntimeEnvMap {
     foreach ($t in $cliApiKeyEnvNames) {
         $name = "$t".Trim()
         if ($name) { $map[$name] = $ApiKey }
+    }
+
+    $providerEnvironment = Get-ByokProviderEnvironmentMap $Provider
+    if ($providerEnvironment) {
+        foreach ($p in (Get-ByokObjectEntries $providerEnvironment)) {
+            $name = "$($p.Name)".Trim()
+            if (-not $name) { continue }
+            $val = "$($p.Value)"
+            foreach ($k in $subs.Keys) { $val = $val.Replace($k, $subs[$k]) }
+            $map[$name] = $val
+        }
     }
 
     $providerOverrides = Get-ByokProviderCliOverrides $Provider $Cli

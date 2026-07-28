@@ -146,11 +146,15 @@ The installed example contains the full schema. A provider entry resembles:
         "itemsPath": "data",
         "idPath": "id"
       },
-      "environment": {}
+      "environment": {
+        "COPILOT_PROVIDER_API_KEY": "{api_key}"
+      }
     }
   }
 }
 ```
+
+A provider's `environment` may contain provider-wide environment templates directly. It may also contain a CLI ID whose value is another environment map for CLI-specific overrides; CLI-specific values take precedence over provider-wide values.
 
 Set the key outside the file:
 

@@ -159,9 +159,17 @@ function validateProvider(provider, jsonPath) {
   if (provider.settings !== undefined) validateEnvMap(provider.settings, `${jsonPath}.settings`);
   if (provider.environment !== undefined) {
     if (!isRecord(provider.environment)) fail(`${jsonPath}.environment`, 'must be an object.');
-    for (const [cliId, envMap] of Object.entries(provider.environment)) {
-      validateId(cliId, `${jsonPath}.environment.${cliId}`);
-      validateEnvMap(envMap, `${jsonPath}.environment.${cliId}`);
+    for (const [name, value] of Object.entries(provider.environment)) {
+      const entryPath = `${jsonPath}.environment.${name}`;
+      if (isRecord(value)) {
+        validateId(name, entryPath);
+        validateEnvMap(value, entryPath);
+      } else {
+        validateEnvName(name, entryPath);
+        if (!['string', 'number', 'boolean'].includes(typeof value)) {
+          fail(entryPath, 'must be a string, number, or boolean template value, or a CLI-specific environment object.');
+        }
+      }
     }
   }
 }

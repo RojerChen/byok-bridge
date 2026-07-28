@@ -98,7 +98,12 @@ describe('BYOK CLI Hub Node Manager Unit & Integration Tests', () => {
       id: 'custom-prov',
       name: 'Custom Provider',
       apiKeyEnvNames: ['COPILOT_PROVIDER_API_KEY'],
-      modelEnvNames: ['COPILOT_MODEL']
+      modelEnvNames: ['COPILOT_MODEL'],
+      environment: {
+        DIRECT_PROVIDER_VALUE: '{provider_id}:{model}',
+        OVERRIDE_ORDER: 'provider-wide',
+        copilot: { OVERRIDE_ORDER: 'cli-specific', PROVIDER_AUTH: 'Bearer {api_key}' }
+      }
     };
 
     const cli = {
@@ -127,6 +132,9 @@ describe('BYOK CLI Hub Node Manager Unit & Integration Tests', () => {
     assert.equal(envMap['COPILOT_PROVIDER_TYPE'], 'openai');
     assert.equal(envMap['COPILOT_MODEL'], 'claude-3-5-sonnet');
     assert.equal(envMap['BYOK_MODEL_PROVIDER_ID'], 'custom-prov');
+    assert.equal(envMap['DIRECT_PROVIDER_VALUE'], 'custom-prov:claude-3-5-sonnet');
+    assert.equal(envMap['OVERRIDE_ORDER'], 'cli-specific');
+    assert.equal(envMap['PROVIDER_AUTH'], 'Bearer sk-secret-key-xyz');
 
     const cliArgs = resolveCliArgs(cli, provider, baseUrl, model, apiKey, providerId);
     assert.deepEqual(cliArgs, ['--experimental']);

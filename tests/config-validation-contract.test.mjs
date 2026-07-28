@@ -58,7 +58,12 @@ const cases = [
       providers: {
         local: {
           settings: { PROVIDER_NUMBER: 42 },
-          environment: { test: { PROVIDER_STRING: 'value', PROVIDER_BOOLEAN: false } }
+          environment: {
+            PROVIDER_STRING: 'value',
+            PROVIDER_NUMBER: 1.5,
+            PROVIDER_BOOLEAN: false,
+            test: { CLI_SPECIFIC: 'value' }
+          }
         }
       }
     }
@@ -265,6 +270,16 @@ const cases = [
     name: 'provider nested environment object template is rejected',
     accepted: false,
     config: withProvider({ environment: { test: { VALUE: { nested: 1 } } } })
+  },
+  {
+    name: 'provider direct environment array template is rejected',
+    accepted: false,
+    config: withProvider({ environment: { VALUE: ['nested'] } })
+  },
+  {
+    name: 'provider direct environment null template is rejected',
+    accepted: false,
+    config: withProvider({ environment: { VALUE: null } })
   },
   {
     name: 'provider settings array template is rejected',

@@ -19,6 +19,7 @@ param(
     [string]$Model,
     [switch]$DryRun,
     [switch]$Refresh,
+    [string]$EnvFile,
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$LaunchArgs
 )
 
@@ -51,6 +52,93 @@ function Get-OptionalValue {
     $trimmed = "$Value".Trim()
     if ([string]::IsNullOrWhiteSpace($trimmed)) { return $null }
     return $trimmed
+}
+
+function Resolve-ByokCmdExecutable {
+    param([string]$CommandName)
+    $commands = @(Get-Command $CommandName -All -ErrorAction SilentlyContinue)
+    foreach ($command in $commands) {
+        $path = if ($command.Source) { "$($command.Source)" } elseif ($command.Path) { "$($command.Path)" } else { '' }
+        $extension = [IO.Path]::GetExtension($path).ToLowerInvariant()
+        if ($command.CommandType -eq [Management.Automation.CommandTypes]::Application -and
+            $extension -in @('.com', '.exe', '.bat', '.cmd')) {
+            return $command
+        }
+    }
+    return $null
+}
+
+function Format-ByokCliArgsForCmd {
+    param([string[]]$Values)
+    $parts = [System.Collections.Generic.List[string]]::new()
+    foreach ($arg in @($Values)) {
+        if ($null -eq $arg) { continue }
+        $text = [string]$arg
+        if ($text -match '[\s"]') {
+            $parts.Add(('"{0}"' -f ($text -replace '"', '""')))
+        } else {
+            $parts.Add($text)
+        }
+    }
+    return [string]::Join(' ', $parts)
+}
+
+function ConvertTo-ByokCmdSetLine {
+    param([string]$Name, [AllowEmptyString()][string]$Value)
+    if ($Name -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+        throw "Cannot write invalid CMD environment variable name '$Name'."
+    }
+    if ($Value -match '[\x00\r\n]') {
+        throw "Environment variable '$Name' contains a value that cannot be represented in a CMD launch plan."
+    }
+    if ($Value.Contains('"')) {
+        throw "Environment variable '$Name' contains a double quote that cannot be safely applied to the caller CMD session."
+    }
+    # Percent signs are expanded while CMD parses a batch file, including
+    # inside set's quoted assignment form. Doubling preserves the literal.
+    return ('set "{0}={1}"' -f $Name, $Value.Replace('%', '%%'))
+}
+
+function Write-ByokCmdLaunchPlan {
+    param(
+        [string]$Path,
+        $Environment,
+        [string]$Executable,
+        [string[]]$Arguments,
+        [string]$CliId,
+        [bool]$Launch
+    )
+    if (-not [IO.Path]::IsPathRooted($Path)) { throw 'The CMD launch-plan path must be absolute.' }
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $lines.Add('@echo off')
+    if ($Launch) {
+        foreach ($name in $Environment.Keys) {
+            $lines.Add((ConvertTo-ByokCmdSetLine $name ([string]$Environment[$name])))
+        }
+        $lines.Add((ConvertTo-ByokCmdSetLine '__BYOK_CLI_HUB_ACTION' 'launch'))
+        $lines.Add((ConvertTo-ByokCmdSetLine '__BYOK_CLI_HUB_EXECUTABLE' $Executable))
+        $lines.Add((ConvertTo-ByokCmdSetLine '__BYOK_CLI_HUB_ARGUMENTS' (Format-ByokCliArgsForCmd $Arguments)))
+        $lines.Add((ConvertTo-ByokCmdSetLine '__BYOK_CLI_HUB_CLI_ID' $CliId))
+    } else {
+        $lines.Add((ConvertTo-ByokCmdSetLine '__BYOK_CLI_HUB_ACTION' 'none'))
+    }
+
+    $directory = Split-Path -Parent $Path
+    if (-not $directory -or -not (Test-Path -LiteralPath $directory -PathType Container)) {
+        throw "CMD launch-plan directory does not exist: $directory"
+    }
+    $stream = $null
+    $writer = $null
+    try {
+        $stream = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        $writer = New-Object IO.StreamWriter($stream, (New-Object Text.UTF8Encoding $false))
+        foreach ($line in $lines) { $writer.WriteLine($line) }
+        $writer.Flush()
+        $stream.Flush()
+    } finally {
+        if ($writer) { $writer.Dispose() }
+        elseif ($stream) { $stream.Dispose() }
+    }
 }
 
 function Write-DefaultMenuItem {
@@ -212,6 +300,11 @@ try {
     $apiKey = if ($ApiKey) { $ApiKey }
               elseif ($envApiKey) { $envApiKey }
               else { '' }
+    if (-not $DryRun -and -not $apiKey -and $selected.apiKeyRequired -ne $false) {
+        $apiKey = (Read-SecureStringAsPlain "API key for '$($selected.name)'").Trim()
+        $fromPrompt = $true
+        if (-not $apiKey) { Write-Err "API key is required for provider '$($selected.name)'."; exit 1 }
+    }
 
     $apiPath = if ($selected.modelsApi -and $selected.modelsApi.path) { $selected.modelsApi.path } else { '/models' }
     $modelCacheTtlSeconds = Get-ByokModelCacheTtlSeconds $selected
@@ -223,11 +316,12 @@ try {
         (Test-ByokModelCacheFresh $selected.id $selected $dataDir $base $apiPath)
 
     $staticModelIds = @()
+    $staticModelSeen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
     foreach ($configuredModel in @($selected.models)) {
         if ($configuredModel -is [string]) { $configuredId = "$configuredModel".Trim() }
         elseif ($configuredModel -and $configuredModel.available -ne $false) { $configuredId = "$($configuredModel.id)".Trim() }
         else { $configuredId = '' }
-        if ($configuredId -and $staticModelIds -notcontains $configuredId) { $staticModelIds += $configuredId }
+        if ($configuredId -and $staticModelSeen.Add($configuredId)) { $staticModelIds += $configuredId }
     }
 
     $modelIds = @()
@@ -241,7 +335,7 @@ try {
         $available = if ($cacheIdentityMatches) { @($cachedModelIds) } else { @() }
         $modelIds = @($available)
         Write-Inf 'Dry run: network and cache updates were skipped.'
-    } elseif ($useCachedModels) {
+    } elseif ($useCachedModels -and -not $Refresh) {
         $modelIds = @($cachedModelIds)
         $available = @($cachedModelIds)
         Write-Inf "Using cached models for $($selected.id) (ttl=$modelCacheTtlSeconds sec)"
@@ -263,7 +357,9 @@ try {
             }
         }
         if ($fetchError) {
-            if (-not $Refresh -and $cacheIdentityMatches -and $cachedModelIds.Count -gt 0) {
+            $fetchCategory = "$($fetchError.Exception.Data['ByokModelFetchCategory'])"
+            $canUseStaleCache = $fetchCategory -in @('transport', 'auth')
+            if (-not $Refresh -and $canUseStaleCache -and $cacheIdentityMatches -and $cachedModelIds.Count -gt 0) {
                 $modelIds = @($cachedModelIds)
                 $available = @($cachedModelIds)
                 Write-Host "Warning: model refresh failed; using stale cache for '$($selected.id)': $($fetchError.Exception.Message)" -ForegroundColor Yellow
@@ -281,14 +377,34 @@ try {
     $envModel = [Environment]::GetEnvironmentVariable($modelFallbackEnv)
     $availableModelSet = @($available)
     $providerChanged = ($rememberedProviderId -and $selected.id -ne $rememberedProviderId)
-    $chosenModel = Resolve-ByokChosenModel $Model $envModel $rememberedModel $availableModelSet $providerChanged
+    $isOpenCode = $selectedCli.adapter -ceq 'opencode-config-v1'
+    if ($isOpenCode) {
+        $modelSelection = Resolve-ByokChosenModelSelection $Model $envModel $rememberedModel $availableModelSet $providerChanged
+        $chosenModel = $modelSelection.model
+        if (-not $chosenModel) { Write-Err 'No model is available. Run again with -Refresh or specify -Model explicitly.'; exit 1 }
+    } else {
+        $chosenModel = Resolve-ByokChosenModel $Model $envModel $rememberedModel $availableModelSet $providerChanged
+        $modelSelection = [pscustomobject]@{ model = $chosenModel; source = if ($Model) { 'option' } elseif ($envModel) { 'environment' } else { 'state-or-fallback' } }
+    }
 
     $resolvedCliArgs = @(Resolve-ByokCliArgs $selectedCli $selected $base $chosenModel $apiKey $selected.id)
     $resolvedLaunchArgs = @($resolvedCliArgs)
     if ($LaunchArgs) { $resolvedLaunchArgs += @($LaunchArgs) }
 
-    $envMap = Build-ByokRuntimeEnvMap $selected $base $chosenModel $apiKey $selected.id $selectedCli
+    $envMap = if ($isOpenCode) {
+        Build-ByokAdapterRuntimeEnvMap $selected $base $chosenModel $apiKey $selected.id $selectedCli
+    } else {
+        Build-ByokRuntimeEnvMap $selected $base $chosenModel $apiKey $selected.id $selectedCli
+    }
     $envMap['BYOK_CLI_HUB_DATA_DIR'] = $dataDir
+    $openCodeOutput = $null
+    $openCodeConfigPath = $null
+    if ($isOpenCode -and -not $Refresh) {
+        $openCodeConfigPath = Get-ByokOpenCodeConfigPath $dataDir $selectedCli.configFileName
+        $openCodeOutput = Build-ByokOpenCodeConfig $selectedCli.template $selected.id $selected.name $base $apiKey ($selected.apiKeyRequired -ne $false) $availableModelSet $chosenModel $modelSelection.source
+        $envMap['OPENCODE_CONFIG'] = $openCodeConfigPath
+        if ($apiKey) { $envMap['BYOK_CLI_HUB_OPENCODE_API_KEY'] = $apiKey }
+    }
 
     $state = [ordered]@{
         cliId           = $selectedCli.id
@@ -298,29 +414,74 @@ try {
         providerType    = if ($selected.type) { $selected.type } else { 'openai' }
         baseUrl         = $base
         model           = $chosenModel
+        modelSource     = $modelSelection.source
         apiKeySource    = Get-ByokApiKeySource $keyEnvName $fromPrompt $fromArgument ([bool]$apiKey)
         updatedAt       = (Get-Date).ToString('o')
+    }
+    if ($isOpenCode) {
+        $state['runtimeProviderId'] = if ($openCodeOutput) { $openCodeOutput.runtimeProviderId } else { Get-ByokOpenCodeProviderId $selected.id }
+        $state['runtimeConfigType'] = 'opencode-config-v1'
+    }
+
+    $cliCmdName = if ($selectedCli.command) { $selectedCli.command } else { 'copilot' }
+    $cliExe = $null
+    if (-not $DryRun -and -not $Refresh) {
+        $cliExe = if ($EnvFile) { Resolve-ByokCmdExecutable $cliCmdName } else { Get-Command $cliCmdName -ErrorAction SilentlyContinue }
+        if (-not $cliExe) {
+            if ($EnvFile) { Write-Err "The '$cliCmdName' command has no CMD-compatible .com, .exe, .bat, or .cmd executable in PATH." }
+            else { Write-Err "The '$cliCmdName' command was not found in PATH." }
+            exit 5
+        }
+        if ($isOpenCode) {
+            Write-ByokOpenCodeConfig $openCodeConfigPath $openCodeOutput.config | Out-Null
+            Write-Inf "Generated OpenCode config: $openCodeConfigPath"
+            Write-Inf "OpenCode runtime provider: $($openCodeOutput.runtimeProviderId) ($(@($openCodeOutput.models).Count) models)"
+        }
     }
     if (-not $DryRun) { Write-ByokState $state $dataDir }
 
     Write-Inf "Provider: $($selected.name)"
     Write-Inf "Model: $chosenModel"
-    Write-Inf ("API key: " + $(if ($apiKey) { '[set]' } else { '[not set]' }))
+    Write-Inf ("API key: " + $(if ($apiKey) { '[set]' } elseif ($selected.apiKeyRequired -eq $false) { '[not required]' } elseif ($DryRun) { '[missing]' } else { '[not set]' }))
+
+    if ($EnvFile) {
+        $shouldLaunch = -not $DryRun -and -not $Refresh
+        Write-ByokCmdLaunchPlan $EnvFile $envMap $(if ($cliExe) { $cliExe.Source } else { '' }) $resolvedLaunchArgs $selectedCli.id $shouldLaunch
+        if ($shouldLaunch) { Write-Inf 'Prepared caller CMD environment.' }
+        return
+    }
 
     if ($DryRun) { Write-Inf 'Dry run complete.'; return }
     if ($Refresh) { Write-Inf 'Model cache refresh complete.'; return }
 
     Write-Host 'Applying BYOK environment in the current session...' -ForegroundColor Cyan
-    foreach ($k in $envMap.Keys) { Set-Item -Path "Env:$k" -Value $envMap[$k] }
-
-    $cliCmdName = if ($selectedCli.command) { $selectedCli.command } else { 'copilot' }
-
-    Write-Host "Launching $($selectedCli.name)..." -ForegroundColor Cyan
-    $cliExe = (Get-Command $cliCmdName -ErrorAction SilentlyContinue)
-    if (-not $cliExe) { Write-Err "The '$cliCmdName' command was not found in PATH."; exit 5 }
-
-    & $cliExe.Source @resolvedLaunchArgs
-    exit $LASTEXITCODE
+    $processEnvironment = [Environment]::GetEnvironmentVariables([EnvironmentVariableTarget]::Process)
+    $previousEnvironment = [ordered]@{}
+    foreach ($k in $envMap.Keys) {
+        $previousEnvironment[$k] = [pscustomobject]@{
+            present = $processEnvironment.Contains($k)
+            value = [Environment]::GetEnvironmentVariable($k, [EnvironmentVariableTarget]::Process)
+        }
+    }
+    $childExitCode = 1
+    try {
+        foreach ($k in $envMap.Keys) { Set-Item -Path "Env:$k" -Value $envMap[$k] }
+        Write-Host "Launching $($selectedCli.name)..." -ForegroundColor Cyan
+        & $cliExe.Source @resolvedLaunchArgs
+        $childExitCode = $LASTEXITCODE
+    } finally {
+        foreach ($k in $previousEnvironment.Keys) {
+            $previous = $previousEnvironment[$k]
+            $restoreValue = if ($previous.present) { $previous.value } else { $null }
+            [Environment]::SetEnvironmentVariable($k, $restoreValue, [EnvironmentVariableTarget]::Process)
+        }
+    }
+    if ($isOpenCode -and $childExitCode -ne 0) {
+        Write-Err "OpenCode exited with code $childExitCode. Generated config: $openCodeConfigPath"
+        Write-Err 'Check the merged configuration with: opencode debug config'
+        Write-Err "Check provider models with: opencode models $($openCodeOutput.runtimeProviderId)"
+    }
+    exit $childExitCode
 } catch {
     Write-Err $_.Exception.Message
     exit 1

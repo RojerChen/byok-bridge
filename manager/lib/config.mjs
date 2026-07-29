@@ -2,6 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getByokDataDir, readJsonStrict, writeJsonAtomic } from './state.mjs';
+import {
+  OPENCODE_ADAPTER,
+  OPENCODE_CONFIG_ENV,
+  OPENCODE_CONFIG_FILE,
+  validateOpenCodeTemplate
+} from './opencode.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -95,6 +101,24 @@ function validateCli(cli, jsonPath) {
   if (cli.settings !== undefined) validateEnvMap(cli.settings, `${jsonPath}.settings`);
   if (cli.status !== undefined && !['supported', 'partial', 'unsupported'].includes(String(cli.status).toLowerCase())) {
     fail(`${jsonPath}.status`, 'must be supported, partial, or unsupported.');
+  }
+  if (cli.adapter !== undefined) {
+    if (cli.adapter !== OPENCODE_ADAPTER) {
+      fail(`${jsonPath}.adapter`, `unsupported adapter '${cli.adapter}'.`);
+    }
+    if (cli.configEnvName !== OPENCODE_CONFIG_ENV) {
+      fail(`${jsonPath}.configEnvName`, `must equal '${OPENCODE_CONFIG_ENV}'.`);
+    }
+    if (cli.configFileName !== OPENCODE_CONFIG_FILE) {
+      fail(`${jsonPath}.configFileName`, `must equal '${OPENCODE_CONFIG_FILE}'.`);
+    }
+    try {
+      validateOpenCodeTemplate(cli.template);
+    } catch (error) {
+      fail(`${jsonPath}.template`, error.message);
+    }
+  } else if (cli.template !== undefined || cli.configEnvName !== undefined || cli.configFileName !== undefined) {
+    fail(jsonPath, 'template, configEnvName, and configFileName require an adapter.');
   }
 }
 
@@ -226,6 +250,30 @@ export function getDefaultConfigStructure() {
           COPILOT_MODEL: '{model}',
           BYOK_MODEL_PROVIDER_ID: '{provider_id}'
         }
+      },
+      opencode: {
+        name: 'OpenCode CLI',
+        command: 'opencode',
+        args: [],
+        adapter: OPENCODE_ADAPTER,
+        configEnvName: OPENCODE_CONFIG_ENV,
+        configFileName: OPENCODE_CONFIG_FILE,
+        template: {
+          '$schema': 'https://opencode.ai/config.json',
+          provider: {
+            '{opencode_provider_id}': {
+              npm: '@ai-sdk/openai-compatible',
+              name: '{provider_name} (BYOK CLI Hub)',
+              options: {
+                baseURL: '{url}',
+                apiKey: '{api_key_ref}'
+              },
+              models: '{models}'
+            }
+          },
+          model: '{opencode_provider_id}/{model}'
+        },
+        environment: {}
       }
     },
     providers: {
@@ -267,6 +315,10 @@ export function normalizeConfig(rawConfig, configPath) {
         : (cli.defaultModelEnvNames ? [cli.defaultModelEnvNames] : []),
       apiKeyEnv: Array.isArray(cli.apiKeyEnv) ? cli.apiKeyEnv : (cli.apiKeyEnv ? [cli.apiKeyEnv] : []),
       environment: cli.environment || cli.settings || {},
+      adapter: cli.adapter || null,
+      configEnvName: cli.configEnvName || null,
+      configFileName: cli.configFileName || null,
+      template: cli.template || null,
       capabilities: cli.capabilities || null,
       status: cli.status || cli.capabilities?.status || 'supported',
       order: typeof cli.order === 'number' ? cli.order : 0

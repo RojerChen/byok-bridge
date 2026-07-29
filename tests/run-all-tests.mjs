@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 
 const platformScripts = {
-  win32: ['test:node', 'smoke', 'test:powershell-http', 'test:windows-installer'],
+  win32: ['test:node', 'smoke', 'test:powershell-http', 'test:windows-shell', 'test:windows-installer'],
   linux: ['test:node', 'test:linux-shell', 'test:linux-installer']
 };
 const scripts = platformScripts[process.platform] || ['test:node'];

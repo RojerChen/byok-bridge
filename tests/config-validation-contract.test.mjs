@@ -26,6 +26,27 @@ function withProvider(provider) {
   return { ...baseConfig(), providers: { local: provider } };
 }
 
+function openCodeCli(overrides = {}) {
+  return {
+    command: 'opencode',
+    args: [],
+    adapter: 'opencode-config-v1',
+    configEnvName: 'OPENCODE_CONFIG',
+    configFileName: 'opencode.json',
+    template: {
+      provider: {
+        '{opencode_provider_id}': {
+          options: { baseURL: '{url}', apiKey: '{api_key_ref}' },
+          models: '{models}'
+        }
+      },
+      model: '{opencode_provider_id}/{model}'
+    },
+    environment: {},
+    ...overrides
+  };
+}
+
 const cases = [
   { name: 'minimal valid config', accepted: true, config: baseConfig() },
   {
@@ -93,6 +114,51 @@ const cases = [
     name: 'valid simple executable name',
     accepted: true,
     config: withCli({ command: 'tool-name.exe' })
+  },
+  {
+    name: 'valid OpenCode adapter template',
+    accepted: true,
+    config: withCli(openCodeCli())
+  },
+  {
+    name: 'OpenCode adapter name is fixed',
+    accepted: false,
+    config: withCli(openCodeCli({ adapter: 'unknown-adapter' }))
+  },
+  {
+    name: 'OpenCode config environment name is fixed',
+    accepted: false,
+    config: withCli(openCodeCli({ configEnvName: 'OTHER_CONFIG' }))
+  },
+  {
+    name: 'OpenCode output filename is fixed',
+    accepted: false,
+    config: withCli(openCodeCli({ configFileName: 'providers.json' }))
+  },
+  {
+    name: 'OpenCode plaintext API key placeholder is rejected',
+    accepted: false,
+    config: withCli(openCodeCli({ template: { value: '{api_key}' } }))
+  },
+  {
+    name: 'legacy OpenCode API key placeholder name is rejected',
+    accepted: false,
+    config: withCli(openCodeCli({ template: { value: '{api_key_env}' } }))
+  },
+  {
+    name: 'OpenCode unknown Hub placeholder is rejected',
+    accepted: false,
+    config: withCli(openCodeCli({ template: { value: '{unknown_token}' } }))
+  },
+  {
+    name: 'OpenCode API key reference placeholder must be options.apiKey',
+    accepted: false,
+    config: withCli(openCodeCli({ template: { apiKey: '{api_key_ref}' } }))
+  },
+  {
+    name: 'OpenCode fields require an adapter',
+    accepted: false,
+    config: withCli({ command: 'opencode', configFileName: 'opencode.json' })
   },
   {
     name: 'valid Windows drive-rooted command path',

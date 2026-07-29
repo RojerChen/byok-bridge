@@ -191,16 +191,20 @@ try {
     # Validate the config before creating or replacing the canonical path.
     Import-Module (Join-Path $sourceRoot 'manager\ByokManager.psm1') -DisableNameChecking -Force -ErrorAction Stop
     if (Test-Path -LiteralPath $configPath) {
-        $configValue = Get-Content -Raw -LiteralPath $configPath -Encoding UTF8 | ConvertFrom-Json
-        Assert-ByokProviderConfig $configValue | Out-Null
+        try {
+            $configValue = Get-Content -Raw -LiteralPath $configPath -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
+            Assert-ByokProviderConfig $configValue | Out-Null
+        } catch {
+            throw "Invalid provider configuration '$configPath': $($_.Exception.Message)"
+        }
     } else {
         $sourceConfig = if (Test-Path -LiteralPath $legacyConfig) { $legacyConfig } else { Join-Path $sourceRoot 'config\providers.example.json' }
         try {
-            $configValue = Get-Content -Raw -LiteralPath $sourceConfig -Encoding UTF8 | ConvertFrom-Json
+            $configValue = Get-Content -Raw -LiteralPath $sourceConfig -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
+            Assert-ByokProviderConfig $configValue | Out-Null
         } catch {
             throw "Invalid provider configuration '$sourceConfig': $($_.Exception.Message)"
         }
-        Assert-ByokProviderConfig $configValue | Out-Null
         Write-ByokJsonAtomic $configPath $configValue
         $createdCanonicalConfig = $true
         Write-Host "Initialized provider configuration: $configPath"

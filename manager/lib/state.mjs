@@ -85,6 +85,8 @@ function writeJsonUnlocked(filePath, data) {
     fs.fsyncSync(fd);
     fs.closeSync(fd);
     fd = undefined;
+    JSON.parse(fs.readFileSync(tmpPath, 'utf8'));
+    if (process.platform !== 'win32') fs.chmodSync(tmpPath, 0o600);
     fs.renameSync(tmpPath, filePath);
     if (process.platform !== 'win32') fs.chmodSync(filePath, 0o600);
     syncDirectory(dir);

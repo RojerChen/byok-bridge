@@ -120,10 +120,23 @@ function Write-ByokJsonAtomicUnlocked {
     $tmp = "$Path.$PID.$([Guid]::NewGuid().ToString('N')).tmp"
     $replaceBackup = "$Path.$PID.$([Guid]::NewGuid().ToString('N')).replace-backup"
     try {
-        $json = ($Value | ConvertTo-Json -Depth 20) + "`n"
+        $json = (($Value | ConvertTo-Json -Depth 64).Replace("`r`n", "`n").Replace("`r", "`n")) + "`n"
         $bytes = (New-Object System.Text.UTF8Encoding $false).GetBytes($json)
         $stream = New-Object System.IO.FileStream($tmp, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None, 4096, [System.IO.FileOptions]::WriteThrough)
         try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
+        # Re-read and parse the durable temp file before replacing a valid target.
+        # A hashtable parse preserves JSON keys that differ only by case,
+        # which is required for case-sensitive OpenCode model IDs.
+        $durableJson = [IO.File]::ReadAllText($tmp, [Text.Encoding]::UTF8)
+        if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('AsHashtable')) {
+            $durableJson | ConvertFrom-Json -AsHashtable -ErrorAction Stop | Out-Null
+        } else {
+            Add-Type -AssemblyName System.Web.Extensions -ErrorAction Stop
+            $serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+            $serializer.MaxJsonLength = 67108864
+            $serializer.RecursionLimit = 100
+            $serializer.DeserializeObject($durableJson) | Out-Null
+        }
         if (Test-Path -LiteralPath $Path) {
             [System.IO.File]::Replace($tmp, $Path, $replaceBackup, $true)
             Remove-Item -LiteralPath $replaceBackup -Force -ErrorAction SilentlyContinue
@@ -177,6 +190,55 @@ function Test-ByokJsonNumber {
         [TypeCode]::Double,
         [TypeCode]::Decimal
     )
+}
+
+function Assert-ByokOpenCodeTemplate {
+    param(
+        $Value,
+        [string]$JsonPath = '$',
+        [int]$Depth = 0,
+        [string]$PropertyName = '',
+        [string]$ParentName = ''
+    )
+    if ($Depth -gt 32) { throw "OpenCode template exceeds the maximum depth of 32 at $JsonPath." }
+
+    if ($Value -is [string]) {
+        $text = "$Value"
+        if ($text.Contains('{api_key}')) { throw "OpenCode templates must not contain plaintext API key placeholder '{api_key}' at $JsonPath." }
+        $known = @('{url}', '{provider_id}', '{opencode_provider_id}', '{provider_name}', '{model}', '{models}', '{api_key_ref}')
+        foreach ($match in [regex]::Matches($text, '\{[a-z][a-z0-9_]*\}')) {
+            if ($known -cnotcontains $match.Value) { throw "Unknown OpenCode template placeholder '$($match.Value)' at $JsonPath." }
+        }
+        if ($text.Contains('{models}') -and $text -cne '{models}') {
+            throw "'{models}' must be the complete template value at $JsonPath."
+        }
+        if ($text.Contains('{api_key_ref}') -and
+            ($text -cne '{api_key_ref}' -or $PropertyName -cne 'apiKey' -or $ParentName -cne 'options')) {
+            throw "'{api_key_ref}' is only allowed as the complete provider options.apiKey value at $JsonPath."
+        }
+        return
+    }
+
+    if ($Value -is [System.Array]) {
+        for ($i = 0; $i -lt $Value.Count; $i++) {
+            Assert-ByokOpenCodeTemplate $Value[$i] "$JsonPath[$i]" ($Depth + 1)
+        }
+        return
+    }
+
+    if (Test-ByokJsonObject $Value) {
+        foreach ($entry in (Get-ByokObjectEntries $Value)) {
+            Assert-ByokOpenCodeTemplate "$($entry.Name)" "$JsonPath key" ($Depth + 1)
+            if ($entry.Name.Contains('{models}') -or $entry.Name.Contains('{api_key_ref}')) {
+                throw "Typed OpenCode placeholders are not allowed in object keys at $JsonPath."
+            }
+            Assert-ByokOpenCodeTemplate $entry.Value "$JsonPath.$($entry.Name)" ($Depth + 1) $entry.Name $PropertyName
+        }
+        return
+    }
+
+    if ($null -eq $Value -or $Value -is [bool] -or (Test-ByokJsonNumber $Value)) { return }
+    throw "Unsupported OpenCode template value at $JsonPath."
 }
 
 function Assert-ByokEnvMap {
@@ -253,6 +315,17 @@ function Assert-ByokProviderConfig {
         }
         if (Test-ByokHasProperty $cli 'environment') { Assert-ByokEnvMap $cli.environment "$basePath.environment" }
         if (Test-ByokHasProperty $cli 'settings') { Assert-ByokEnvMap $cli.settings "$basePath.settings" }
+        if (Test-ByokHasProperty $cli 'adapter') {
+            if ($cli.adapter -cne 'opencode-config-v1') { throw "Invalid provider config at $basePath.adapter: unsupported adapter '$($cli.adapter)'." }
+            if ($cli.configEnvName -cne 'OPENCODE_CONFIG') { throw "Invalid provider config at $basePath.configEnvName: must equal 'OPENCODE_CONFIG'." }
+            if ($cli.configFileName -cne 'opencode.json') { throw "Invalid provider config at $basePath.configFileName: must equal 'opencode.json'." }
+            if (-not (Test-ByokHasProperty $cli 'template') -or -not (Test-ByokJsonObject $cli.template)) {
+                throw "Invalid provider config at $basePath.template: object required."
+            }
+            try { Assert-ByokOpenCodeTemplate $cli.template } catch { throw "Invalid provider config at $basePath.template: $($_.Exception.Message)" }
+        } elseif ((Test-ByokHasProperty $cli 'template') -or (Test-ByokHasProperty $cli 'configEnvName') -or (Test-ByokHasProperty $cli 'configFileName')) {
+            throw "Invalid provider config at ${basePath}: template, configEnvName, and configFileName require an adapter."
+        }
     }
 
     foreach ($providerProperty in (Get-ByokObjectEntries $Config.providers)) {
@@ -413,7 +486,7 @@ function Update-ByokCacheForProvider {
     return (Invoke-WithByokFileLock $cachePath {
     $cache = Read-ByokCache $DataDir
     # Normalize caches into a hashtable keyed by provider id.
-    $caches = [ordered]@{}
+    $caches = [System.Collections.Specialized.OrderedDictionary]::new([StringComparer]::Ordinal)
     if ($cache.caches) {
         if ($cache.caches -is [System.Management.Automation.PSCustomObject]) {
             foreach ($p in $cache.caches.PSObject.Properties) { $caches[$p.Name] = $p.Value }
@@ -430,14 +503,14 @@ function Update-ByokCacheForProvider {
     if ($sameIdentity -and $existingEntry.models) {
         $existingModels = @($existingEntry.models)
     }
-    $byId = [ordered]@{}
+    $byId = [System.Collections.Specialized.OrderedDictionary]::new([StringComparer]::Ordinal)
     $maxOrder = 0
     foreach ($m in $existingModels) {
         $ord = if ($null -ne $m.order) { [int]$m.order } else { 0 }
         if ($ord -gt $maxOrder) { $maxOrder = $ord }
         $byId[$m.id] = [ordered]@{ id = $m.id; order = $ord; available = $false; firstSeen = $m.firstSeen; lastSeen = $m.lastSeen }
     }
-    $seenList = [ordered]@{}
+    $seenList = [System.Collections.Specialized.OrderedDictionary]::new([StringComparer]::Ordinal)
     foreach ($id in $ModelIds) {
         if (-not $id) { continue }
         $seenList[$id] = $true
@@ -581,6 +654,32 @@ function Resolve-ByokChosenModel {
 
     if ($AvailableModels.Count -gt 0) { return "$($AvailableModels[0])".Trim() }
     return 'gpt-4o'
+}
+
+function Resolve-ByokChosenModelSelection {
+    param([string]$RequestedModel, [string]$EnvironmentModel, [string]$RememberedModel, [string[]]$AvailableModels, [bool]$ProviderChanged)
+    $requested = "$RequestedModel".Trim()
+    if ($requested) { return [pscustomobject]@{ model = $requested; source = 'option' } }
+
+    $containsExact = {
+        param([string]$Candidate)
+        foreach ($availableModel in @($AvailableModels)) {
+            if ("$availableModel".Trim() -ceq $Candidate) { return $true }
+        }
+        return $false
+    }
+    $environment = "$EnvironmentModel".Trim()
+    if ($environment -and (& $containsExact $environment)) {
+        return [pscustomobject]@{ model = $environment; source = 'environment' }
+    }
+    $remembered = "$RememberedModel".Trim()
+    if (-not $ProviderChanged -and $remembered -and (& $containsExact $remembered)) {
+        return [pscustomobject]@{ model = $remembered; source = 'state' }
+    }
+    if (@($AvailableModels).Count -gt 0) {
+        return [pscustomobject]@{ model = "$($AvailableModels[0])".Trim(); source = 'first-available' }
+    }
+    return [pscustomobject]@{ model = ''; source = 'first-available' }
 }
 
 function Get-ByokCliEnvironmentMap {
@@ -743,12 +842,160 @@ function Build-ByokRuntimeEnvMap {
     return $map
 }
 
+function Build-ByokAdapterRuntimeEnvMap {
+    param($Provider, [string]$BaseUrl, [string]$Model, [string]$ApiKey, [string]$ProviderId, $Cli)
+    # Config-file adapters follow the same configured environment contract as
+    # every other CLI. Do not filter variables based on names such as
+    # COPILOT_*; a configured environment entry is an explicit instruction.
+    return Build-ByokRuntimeEnvMap $Provider $BaseUrl $Model $ApiKey $ProviderId $Cli
+}
+
+function Get-ByokOpenCodeProviderId {
+    param([string]$ProviderId)
+    $original = "$ProviderId"
+    $slug = ($original.ToLowerInvariant() -replace '[^a-z0-9]+', '-' -replace '^-+|-+$', '')
+    if (-not $slug) { $slug = 'provider' }
+    if ($slug.Length -gt 48) { $slug = $slug.Substring(0, 48).TrimEnd('-') }
+    if (-not $slug) { $slug = 'provider' }
+
+    $suffix = ''
+    if ($original -cne $slug) {
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { $hashBytes = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($original)) } finally { $sha.Dispose() }
+        $hash = ([BitConverter]::ToString($hashBytes)).Replace('-', '').ToLowerInvariant().Substring(0, 8)
+        $suffix = "-$hash"
+    }
+    return "byok-cli-hub-$slug$suffix"
+}
+
+function Convert-ByokOpenCodeTemplateNode {
+    param(
+        $Value,
+        [System.Collections.IDictionary]$Substitutions,
+        [bool]$IncludeApiKeyReference,
+        [string]$JsonPath = '$',
+        [int]$Depth = 0,
+        [string]$PropertyName = '',
+        [string]$ParentName = ''
+    )
+    if ($Depth -gt 32) { throw 'OpenCode template exceeds the maximum depth of 32.' }
+    if ($Value -is [string]) {
+        $text = "$Value"
+        if ($text -ceq '{models}') { return $Substitutions['{models}'] }
+        if ($text -ceq '{api_key_ref}') { return $Substitutions['{api_key_ref}'] }
+        foreach ($token in @('{url}', '{provider_id}', '{opencode_provider_id}', '{provider_name}', '{model}')) {
+            $text = $text.Replace($token, "$($Substitutions[$token])")
+        }
+        return $text
+    }
+    if ($Value -is [System.Array]) {
+        $items = @()
+        for ($i = 0; $i -lt $Value.Count; $i++) {
+            $items += ,(Convert-ByokOpenCodeTemplateNode $Value[$i] $Substitutions $IncludeApiKeyReference "$JsonPath[$i]" ($Depth + 1))
+        }
+        return ,$items
+    }
+    if (Test-ByokJsonObject $Value) {
+        $result = [System.Collections.Specialized.OrderedDictionary]::new([StringComparer]::Ordinal)
+        foreach ($entry in (Get-ByokObjectEntries $Value)) {
+            $key = "$($entry.Name)"
+            foreach ($token in @('{url}', '{provider_id}', '{opencode_provider_id}', '{provider_name}', '{model}')) {
+                $key = $key.Replace($token, "$($Substitutions[$token])")
+            }
+            if ($result.Contains($key)) { throw "OpenCode template produced duplicate object key '$key' at $JsonPath." }
+            if ($entry.Value -is [string] -and $entry.Value -ceq '{api_key_ref}' -and -not $IncludeApiKeyReference) { continue }
+            $rendered = Convert-ByokOpenCodeTemplateNode $entry.Value $Substitutions $IncludeApiKeyReference "$JsonPath.$key" ($Depth + 1) $key $PropertyName
+            $result.Add($key, $rendered)
+        }
+        return $result
+    }
+    return $Value
+}
+
+function Build-ByokOpenCodeConfig {
+    param(
+        $Template,
+        [string]$ProviderId,
+        [string]$ProviderName,
+        [string]$BaseUrl,
+        [string]$ApiKey,
+        [bool]$ApiKeyRequired,
+        [string[]]$AvailableModels,
+        [string]$ChosenModel,
+        [string]$ChosenModelSource
+    )
+    Assert-ByokOpenCodeTemplate $Template
+    $runtimeProviderId = Get-ByokOpenCodeProviderId $ProviderId
+    $models = [System.Collections.Generic.List[string]]::new()
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    foreach ($rawModel in @($AvailableModels)) {
+        $id = "$rawModel".Trim()
+        if (-not $id -or -not $seen.Add($id)) { continue }
+        if ($id.Length -gt 512 -or $id -match '[\x00-\x1F\x7F]') { throw "Invalid OpenCode model ID '$id'." }
+        $models.Add($id)
+        if ($models.Count -gt 4096) { throw 'OpenCode model list exceeds the maximum of 4096.' }
+    }
+    $selectedModel = "$ChosenModel".Trim()
+    if ($ChosenModelSource -ceq 'option' -and $selectedModel -and -not $seen.Contains($selectedModel)) {
+        if ($models.Count -ge 4096) { throw 'OpenCode model list exceeds the maximum of 4096.' }
+        $seen.Add($selectedModel) | Out-Null
+        $models.Add($selectedModel)
+    }
+    if (-not $selectedModel) { throw 'OpenCode requires a selected model.' }
+    if (-not $seen.Contains($selectedModel)) { throw "Selected OpenCode model '$selectedModel' is not available." }
+
+    $modelMap = [System.Collections.Specialized.OrderedDictionary]::new([StringComparer]::Ordinal)
+    foreach ($id in $models) { $modelMap.Add($id, [ordered]@{ name = $id }) }
+    $includeApiKeyReference = $ApiKeyRequired -or -not [string]::IsNullOrEmpty($ApiKey)
+    $subs = [ordered]@{
+        '{url}' = $BaseUrl
+        '{provider_id}' = $ProviderId
+        '{opencode_provider_id}' = $runtimeProviderId
+        '{provider_name}' = $ProviderName
+        '{model}' = $selectedModel
+        '{models}' = $modelMap
+        '{api_key_ref}' = '{env:BYOK_CLI_HUB_OPENCODE_API_KEY}'
+    }
+    $config = Convert-ByokOpenCodeTemplateNode $Template $subs $includeApiKeyReference
+    if (-not $config.Contains('$schema') -or $config['$schema'] -isnot [string] -or -not $config['$schema'].Trim()) {
+        throw 'Generated OpenCode config must contain a non-empty $schema string.'
+    }
+    if ($config['model'] -cne "$runtimeProviderId/$selectedModel") { throw 'Generated OpenCode config has an invalid default model reference.' }
+    if (-not $config['provider'].Contains($runtimeProviderId)) { throw "Generated OpenCode config is missing provider '$runtimeProviderId'." }
+    $runtimeProvider = $config['provider'][$runtimeProviderId]
+    foreach ($id in $models) {
+        if (-not $runtimeProvider['models'].Contains($id)) { throw "Generated OpenCode config is missing model '$id'." }
+    }
+    $hasApiKey = $runtimeProvider['options'].Contains('apiKey')
+    if ($includeApiKeyReference -and (-not $hasApiKey -or $runtimeProvider['options']['apiKey'] -cne '{env:BYOK_CLI_HUB_OPENCODE_API_KEY}')) {
+        throw 'Generated OpenCode config has an invalid API key environment reference.'
+    }
+    if (-not $includeApiKeyReference -and $hasApiKey) { throw 'Generated OpenCode config must omit options.apiKey.' }
+    $json = $config | ConvertTo-Json -Depth 64
+    if ([Text.Encoding]::UTF8.GetByteCount($json) -gt 8388608) { throw 'Generated OpenCode config exceeds 8388608 UTF-8 bytes.' }
+    if ($ApiKey.Length -ge 8 -and $json.Contains($ApiKey)) { throw 'Generated OpenCode config contains the plaintext API key.' }
+    return [pscustomobject]@{ config = $config; runtimeProviderId = $runtimeProviderId; models = $models.ToArray() }
+}
+
+function Get-ByokOpenCodeConfigPath {
+    param([string]$DataDir, [string]$FileName = 'opencode.json')
+    if ($FileName -cne 'opencode.json') { throw "OpenCode configFileName must be 'opencode.json'." }
+    return [IO.Path]::GetFullPath((Join-Path $DataDir $FileName))
+}
+
+function Write-ByokOpenCodeConfig {
+    param([string]$Path, $Config)
+    Write-ByokJsonAtomic $Path $Config
+    return $Path
+}
+
 # --- model fetch --------------------------------------------------------------
 
 function New-ByokModelFetchError {
-    param([string]$Message)
+    param([string]$Message, [string]$Category = 'response')
     $exception = New-Object System.InvalidOperationException($Message)
     $exception.Data['ByokModelFetchError'] = $true
+    $exception.Data['ByokModelFetchCategory'] = $Category
     return $exception
 }
 
@@ -812,7 +1059,7 @@ function Invoke-ByokModelFetch {
     if ($ApiKey) {
         $headerValue = "$prefix$ApiKey"
         if ($headerValue -match '[\x00-\x1F\x7F]') {
-            throw (New-ByokModelFetchError 'API key or prefix contains invalid control characters.')
+            throw (New-ByokModelFetchError 'API key or prefix contains invalid control characters.' 'config')
         }
     }
 
@@ -831,7 +1078,7 @@ function Invoke-ByokModelFetch {
         $client.DefaultRequestHeaders.TryAddWithoutValidation('Accept', 'application/json') | Out-Null
         if ($ApiKey) {
             if (-not $client.DefaultRequestHeaders.TryAddWithoutValidation($headerName, $headerValue)) {
-                throw (New-ByokModelFetchError 'API key header could not be added to the request.')
+                throw (New-ByokModelFetchError 'API key header could not be added to the request.' 'config')
             }
         }
 
@@ -844,16 +1091,18 @@ function Invoke-ByokModelFetch {
         )
         $response = Wait-ByokTaskUntil $responseTask $deadline $cancellation
         if (-not $response.IsSuccessStatusCode) {
-            throw (New-ByokModelFetchError "Provider at $safeOrigin returned HTTP $([int]$response.StatusCode).")
+            $statusCode = [int]$response.StatusCode
+            $category = if ($statusCode -in @(401, 403)) { 'auth' } else { 'transport' }
+            throw (New-ByokModelFetchError "Provider at $safeOrigin returned HTTP $statusCode." $category)
         }
         $mediaType = if ($response.Content.Headers.ContentType) { "$($response.Content.Headers.ContentType.MediaType)" } else { '' }
         if ($mediaType -notmatch '(?i)(^|[+/])json$') {
             $displayMediaType = if ([string]::IsNullOrWhiteSpace($mediaType)) { 'unknown' } else { $mediaType }
-            throw (New-ByokModelFetchError "Expected a JSON response from $safeOrigin; received '$displayMediaType'.")
+            throw (New-ByokModelFetchError "Expected a JSON response from $safeOrigin; received '$displayMediaType'." 'response')
         }
         $declaredLength = $response.Content.Headers.ContentLength
         if ($null -ne $declaredLength -and [long]$declaredLength -gt $MaximumBytes) {
-            throw (New-ByokModelFetchError "Provider response exceeds the $MaximumBytes-byte limit.")
+            throw (New-ByokModelFetchError "Provider response exceeds the $MaximumBytes-byte limit." 'response')
         }
 
         $streamTask = $response.Content.ReadAsStreamAsync()
@@ -866,7 +1115,7 @@ function Invoke-ByokModelFetch {
             $read = Wait-ByokTaskUntil $readTask $deadline $cancellation
             if ($read -le 0) { break }
             $total += $read
-            if ($total -gt $MaximumBytes) { throw (New-ByokModelFetchError "Provider response exceeds the $MaximumBytes-byte limit.") }
+            if ($total -gt $MaximumBytes) { throw (New-ByokModelFetchError "Provider response exceeds the $MaximumBytes-byte limit." 'response') }
             $memory.Write($buffer, 0, $read)
         }
         $body = [Text.Encoding]::UTF8.GetString($memory.ToArray()).TrimStart([char]0xFEFF)
@@ -874,14 +1123,14 @@ function Invoke-ByokModelFetch {
             if ($body.TrimStart().StartsWith('[')) { $resp = @($body | ConvertFrom-Json -ErrorAction Stop) }
             else { $resp = $body | ConvertFrom-Json -ErrorAction Stop }
         } catch {
-            throw (New-ByokModelFetchError "Provider at $safeOrigin returned invalid JSON.")
+            throw (New-ByokModelFetchError "Provider at $safeOrigin returned invalid JSON." 'response')
         }
     } catch [System.OperationCanceledException] {
-        throw (New-ByokModelFetchError "Request timed out after $TimeoutSeconds seconds when connecting to $safeOrigin.")
+        throw (New-ByokModelFetchError "Request timed out after $TimeoutSeconds seconds when connecting to $safeOrigin." 'transport')
     } catch {
         $message = $_.Exception.Message
         if ($_.Exception.Data['ByokModelFetchError'] -eq $true) { throw }
-        throw "Unable to fetch models from ${safeOrigin}: $message"
+        throw (New-ByokModelFetchError "Unable to fetch models from ${safeOrigin}: $message" 'transport')
     } finally {
         if ($memory) { $memory.Dispose() }
         if ($stream) { $stream.Dispose() }
@@ -901,7 +1150,7 @@ function Invoke-ByokModelFetch {
     }
     if ($null -eq $items -and $resp -is [System.Array]) { $items = $resp }
     if ($null -eq $items -or $items -is [string] -or $items -isnot [System.Collections.IEnumerable]) {
-        throw "Provider response from $safeOrigin does not contain an array at '$itemsPath'."
+        throw (New-ByokModelFetchError "Provider response from $safeOrigin does not contain an array at '$itemsPath'." 'response')
     }
 
     $ids = [System.Collections.Generic.List[string]]::new()
@@ -1002,6 +1251,7 @@ Export-ModuleMember -Function Get-ByokDataDir, Get-ByokConfigPath, Read-ByokJson
     Get-ByokCachePath, Read-ByokCache, Write-ByokCache, Update-ByokCacheForProvider,
     Resolve-ByokEnvValue, Get-ByokApiKeyEnvName, Get-ByokModelCacheTtlSeconds,
     Get-ByokProviderCacheEntry, Get-ByokCachedModelIds, Test-ByokModelCacheFresh,
-    Resolve-ByokChosenModel, Get-ByokCliSupportStatus, Expand-ByokTemplateValue, Resolve-ByokCliArgs,
-    Build-ByokRuntimeEnvMap, Invoke-ByokModelFetch, Add-ByokProvider, Get-ByokApiKeySource,
-    Assert-ByokProviderConfig
+    Resolve-ByokChosenModel, Resolve-ByokChosenModelSelection, Get-ByokCliSupportStatus, Expand-ByokTemplateValue, Resolve-ByokCliArgs,
+    Build-ByokRuntimeEnvMap, Build-ByokAdapterRuntimeEnvMap, Invoke-ByokModelFetch, Add-ByokProvider, Get-ByokApiKeySource,
+    Assert-ByokProviderConfig, Assert-ByokOpenCodeTemplate, Get-ByokOpenCodeProviderId,
+    Build-ByokOpenCodeConfig, Get-ByokOpenCodeConfigPath, Write-ByokOpenCodeConfig

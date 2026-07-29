@@ -121,6 +121,16 @@ export function buildRuntimeEnvMap(provider, baseUrl, model, apiKey, providerId,
 }
 
 /**
+ * Config-file adapters use the same configured environment contract as every
+ * other CLI.  An `environment` entry is an instruction to set that variable;
+ * the adapter must not discard it based on the variable name.  CLI-specific
+ * provider overrides still apply only to the selected CLI.
+ */
+export function buildAdapterRuntimeEnvMap(provider, baseUrl, model, apiKey, providerId, cli) {
+  return buildRuntimeEnvMap(provider, baseUrl, model, apiKey, providerId, cli);
+}
+
+/**
  * Marks values derived from the API key as sensitive. Redaction must follow the
  * value source, not guesses based on environment variable names.
  */
@@ -171,27 +181,36 @@ export function getCliSupportStatus(cli) {
   return 'supported';
 }
 
-export function resolveChosenModel(requestedModel, environmentModel, rememberedModel, availableModels = [], providerChanged = false) {
+export function resolveChosenModelSelection(requestedModel, environmentModel, rememberedModel, availableModels = [], providerChanged = false) {
   const req = (requestedModel || '').trim();
-  if (req) return req;
+  if (req) return { model: req, source: 'option' };
 
   const env = (environmentModel || '').trim();
-  if (env) return env;
-
   const rem = (rememberedModel || '').trim();
   const available = Array.isArray(availableModels) ? availableModels : [];
 
-  if (!providerChanged && rem) {
-    if (available.length === 0 || available.includes(rem)) {
-      return rem;
-    }
+  if (env && available.includes(env)) return { model: env, source: 'environment' };
+
+  if (!providerChanged && rem && available.includes(rem)) {
+    return { model: rem, source: 'state' };
   }
 
   if (available.length > 0) {
-    return available[0];
+    return { model: available[0], source: 'first-available' };
   }
 
-  return 'gpt-4o';
+  return { model: '', source: 'first-available' };
+}
+
+export function resolveChosenModel(requestedModel, environmentModel, rememberedModel, availableModels = [], providerChanged = false) {
+  const req = (requestedModel || '').trim();
+  if (req) return req;
+  const env = (environmentModel || '').trim();
+  if (env) return env;
+  const rem = (rememberedModel || '').trim();
+  const available = Array.isArray(availableModels) ? availableModels : [];
+  if (!providerChanged && rem && (available.length === 0 || available.includes(rem))) return rem;
+  return available[0] || 'gpt-4o';
 }
 
 export function getApiKeySource(keyEnvName, fromPrompt = false, fromArgument = false, apiKey = '') {

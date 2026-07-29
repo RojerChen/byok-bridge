@@ -66,6 +66,21 @@ try {
     Assert-True (-not (Test-Path -LiteralPath $dataRoot)) 'Fresh-install rollback left initialized data behind.'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $appRoot 'app'))) 'Fresh-install rollback left an application snapshot.'
 
+    # A malformed existing canonical config must fail with the exact path and
+    # remain byte-for-byte unchanged.
+    Set-TestEnvironment (Join-Path $testRoot 'malformed-canonical')
+    New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
+    $malformedCanonicalPath = Join-Path $dataRoot 'providers.json'
+    [IO.File]::WriteAllText($malformedCanonicalPath, '{"version":1,}', (New-Object Text.UTF8Encoding $false))
+    $malformedBytes = [IO.File]::ReadAllBytes($malformedCanonicalPath)
+    $failed = $false
+    $failureMessage = ''
+    try { & $installer } catch { $failed = $true; $failureMessage = $_.Exception.Message }
+    Assert-True $failed 'Malformed canonical config was accepted.'
+    Assert-True ($failureMessage.Contains($malformedCanonicalPath)) 'Malformed canonical config error omitted its path.'
+    Assert-True ([Convert]::ToBase64String($malformedBytes) -eq [Convert]::ToBase64String([IO.File]::ReadAllBytes($malformedCanonicalPath))) 'Malformed canonical config was modified.'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $appRoot 'app'))) 'Malformed canonical config installed an application snapshot.'
+
     Set-TestEnvironment (Join-Path $testRoot 'fresh')
     & $installer -WithExtension
     & $installer
@@ -75,7 +90,7 @@ try {
     $manifestPath = Join-Path $appDir '.byok-cli-hub-install.json'
     Assert-True (Test-Path -LiteralPath $manifestPath) 'Manifest missing.'
     $manifest = Get-Content -Raw -LiteralPath $manifestPath -Encoding UTF8 | ConvertFrom-Json
-    Assert-True ($manifest.appVersion -eq '0.0.3') 'Manifest appVersion mismatch.'
+    Assert-True ($manifest.appVersion -eq '0.0.4') 'Manifest appVersion mismatch.'
     Assert-True ($manifest.withExtension -eq $true) 'Managed update did not preserve extension choice.'
     Assert-True (-not $manifest.migratedFrom) 'Fresh install must not report migratedFrom.'
     Assert-True (Test-Path -LiteralPath (Join-Path $dataRoot 'providers.json')) 'Canonical config missing.'
@@ -92,7 +107,7 @@ try {
 
     $manifestBytes = [IO.File]::ReadAllBytes($manifestPath)
     $newerManifest = $manifest
-    $newerManifest.appVersion = '0.0.4'
+    $newerManifest.appVersion = '0.0.5'
     [IO.File]::WriteAllText($manifestPath, (($newerManifest | ConvertTo-Json -Depth 10) + "`n"), (New-Object Text.UTF8Encoding $false))
     $failed = $false
     try { & $installer } catch { $failed = $true }
@@ -161,7 +176,7 @@ try {
     $appDir = Join-Path $appRoot 'app'
     $extensionDir = Join-Path $copilotHome 'extensions\byok-cli-hub-copilot'
     $manifest = Get-Content -Raw -LiteralPath (Join-Path $appDir '.byok-cli-hub-install.json') -Encoding UTF8 | ConvertFrom-Json
-    Assert-True ($manifest.appVersion -eq '0.0.3' -and $manifest.migratedFrom -eq '0.0.1') 'Legacy migration metadata is incorrect.'
+    Assert-True ($manifest.appVersion -eq '0.0.4' -and $manifest.migratedFrom -eq '0.0.1') 'Legacy migration metadata is incorrect.'
     Assert-True ($manifest.withExtension -eq $true) 'Legacy extension choice was not preserved.'
     Assert-True (Test-Path -LiteralPath (Join-Path $dataRoot 'providers.json')) 'Legacy config was not migrated.'
     Assert-True (Test-Path -LiteralPath (Join-Path $dataRoot 'config\providers.json')) 'Legacy config backup was not preserved.'

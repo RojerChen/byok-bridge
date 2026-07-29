@@ -156,6 +156,28 @@ try {
     if ($gemProv.apiKeyEnv -notcontains 'GEMINI_API_KEY') { throw "gemini provider apiKeyEnv should include GEMINI_API_KEY" }
     if ($gemProv.apiKeyEnv -notcontains 'GEMINI_PROVIDER_API_KEY') { throw "gemini provider apiKeyEnv should include GEMINI_PROVIDER_API_KEY" }
 
+    # OpenCode adapter: case-sensitive model keys, environment reference, and
+    # the same explicit CLI/provider environment contract as other CLIs.
+    $bundledConfig = Get-Content -Raw -LiteralPath (Join-Path (Split-Path -Parent $here) 'config\providers.json') -Encoding UTF8 | ConvertFrom-Json
+    Assert-ByokProviderConfig $bundledConfig | Out-Null
+    $openCodeCli = $bundledConfig.clis.opencode
+    $openCodeCli | Add-Member -NotePropertyName id -NotePropertyValue 'opencode'
+    $openCodeProvider = [pscustomobject][ordered]@{
+        name = 'Company Gateway'
+        environment = [pscustomobject][ordered]@{
+            PROVIDER_WIDE = '{provider_id}:{model}'
+            opencode = [pscustomobject][ordered]@{ OPENCODE_ONLY = '{provider_id}' }
+        }
+    }
+    $openCodeEnv = Build-ByokAdapterRuntimeEnvMap $openCodeProvider 'https://gateway.example/v1' 'Model/A' 'secret-value' 'Company.Gateway' $openCodeCli
+    if ($openCodeEnv.OPENCODE_ONLY -ne 'Company.Gateway' -or $openCodeEnv.PROVIDER_WIDE -ne 'Company.Gateway:Model/A') { throw 'OpenCode adapter environment scope mismatch' }
+    $openCodeResult = Build-ByokOpenCodeConfig $openCodeCli.template 'Company.Gateway' 'Company Gateway' 'https://gateway.example/v1' 'secret-value' $true @('Model/A','model/a','__proto__') 'Model/A' 'first-available'
+    $openCodePath = Get-ByokOpenCodeConfigPath $dataDir
+    Write-ByokOpenCodeConfig $openCodePath $openCodeResult.config | Out-Null
+    $openCodeJson = [IO.File]::ReadAllText($openCodePath, [Text.Encoding]::UTF8)
+    if (-not $openCodeJson.Contains('"Model/A"') -or -not $openCodeJson.Contains('"model/a"') -or -not $openCodeJson.Contains('"__proto__"')) { throw 'OpenCode model IDs were not preserved exactly' }
+    if (-not $openCodeJson.Contains('{env:BYOK_CLI_HUB_OPENCODE_API_KEY}') -or $openCodeJson.Contains('secret-value')) { throw 'OpenCode API key reference mismatch' }
+
     Write-Host 'Smoke test passed.' -ForegroundColor Green
 } finally {
     Remove-Item Env:\BYOK_CLI_HUB_DATA_DIR -ErrorAction SilentlyContinue

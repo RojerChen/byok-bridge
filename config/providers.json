@@ -15,6 +15,32 @@
         "COPILOT_MODEL": "{model}",
         "BYOK_MODEL_PROVIDER_ID": "{provider_id}"
       }
+    },
+    "opencode": {
+      "name": "OpenCode CLI",
+      "command": "opencode",
+      "args": [],
+      "adapter": "opencode-config-v1",
+      "configEnvName": "OPENCODE_CONFIG",
+      "configFileName": "opencode.json",
+      "template": {
+        "$schema": "https://opencode.ai/config.json",
+        "provider": {
+          "{opencode_provider_id}": {
+            "npm": "@ai-sdk/openai-compatible",
+            "name": "{provider_name} (BYOK CLI Hub)",
+            "options": {
+              "baseURL": "{url}",
+              "apiKey": "{api_key_ref}"
+            },
+            "models": "{models}"
+          }
+        },
+        "model": "{opencode_provider_id}/{model}"
+      },
+      "environment": {
+        "OPENCODE_DISABLE_FFF" : false
+      }
     }
   },
   "providers": {

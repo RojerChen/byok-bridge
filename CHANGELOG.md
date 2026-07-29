@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 The format is intentionally simple and follows a lightweight `Keep a Changelog` style.
 
+## [0.0.4] - 2026-07-29
+
+### Added
+
+- OpenCode CLI support on Windows and Linux/WSL through the `opencode-config-v1` adapter.
+- Atomic generation of `<data-dir>/opencode.json`, with deterministic runtime provider IDs, exact case-sensitive model maps, explicit model-selection provenance, and `OPENCODE_CONFIG` launch wiring.
+- Node, PowerShell 5.1, dry-run, preflight-preservation, environment-scope, special-model-ID, and plaintext-secret regression coverage.
+
+### Changed
+
+- The default and example provider configurations now include OpenCode alongside GitHub Copilot CLI.
+- OpenCode templates now use `{api_key_ref}`, rendered as `{env:BYOK_CLI_HUB_OPENCODE_API_KEY}`; the ambiguous `{api_key_env}` name is no longer accepted. The `{api_key}` placeholder remains reserved for assigning the plaintext key to runtime environment entries.
+- Configured environment entries use the same semantics for every CLI: the selected CLI environment, provider-wide environment, selected provider CLI override, and configured API-key/model targets are all applied without filtering variable names.
+- Runtime JSON writes reparse the flushed temporary file before atomic replacement. OpenCode generation is limited to 32 levels, 4096 unique models, and 8 MiB of UTF-8 JSON.
+
+### Fixed
+
+- The Windows installer now reports the exact existing `providers.json` path when strict JSON parsing or semantic validation fails, while preserving the invalid file unchanged.
+- Restored the Windows `0.0.1` caller-CMD contract: resolved provider, model, API-key, and OpenCode runtime variables remain in the current console and can be reused by the next invocation.
+
+### Security
+
+- OpenCode config authentication uses `BYOK_CLI_HUB_OPENCODE_API_KEY`; generated JSON contains an environment reference and never the plaintext key.
+- Template validation rejects plaintext key placeholders, unknown Hub placeholders, misplaced typed placeholders, and rendered object-key collisions.
+
 ## [0.0.3] - 2026-07-29
 
 ### Added

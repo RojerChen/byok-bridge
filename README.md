@@ -1,14 +1,15 @@
 # BYOK CLI Hub
 
-BYOK CLI Hub selects a provider and model, builds a configuration-driven environment, and launches an AI CLI. On Linux/WSL, the installer enables a managed Bash function so a bare `byok-cli-hub` command retains the resolved BYOK environment in the current shell session. The underlying executable remains available in isolated child-only mode. Credentials are never written to config/state/cache or shell startup files.
+BYOK CLI Hub selects a provider and model, builds a configuration-driven environment, and launches an AI CLI. The Windows CMD launcher and installed Linux/WSL Bash function retain the resolved BYOK environment in the current shell session, so the same provider credential can be reused until that terminal closes. Credentials are never written to config/state/cache or shell startup files.
 
-Current version: `0.0.3`
+Current version: `0.0.4`
 
 ## Supported CLIs
 
 | CLI | Status | Notes |
 | --- | --- | --- |
 | GitHub Copilot CLI | Supported (experimental) | Verified with Copilot CLI 1.0.73 |
+| OpenCode CLI | Experimental | Generated config loading verified with OpenCode 1.18.9; real-provider conversation validation is still required |
 | Gemini CLI | Not supported | Not included in the current integration scope |
 | Codex CLI | Not supported | Not included in the current integration scope |
 
@@ -19,12 +20,12 @@ The optional Copilot extension uses an experimental API and may need updates whe
 Windows:
 
 - Windows 10/11 and PowerShell 5.1 or later.
-- GitHub Copilot CLI in `PATH`.
+- At least one integrated CLI (`copilot` or `opencode`) in `PATH`.
 
 Linux / WSL2:
 
 - Bash, `realpath`, and Node.js 22 or later.
-- GitHub Copilot CLI in `PATH`.
+- At least one integrated CLI (`copilot` or `opencode`) in `PATH`.
 - The managed caller-shell integration requires Bash 4.2 or later.
 
 Providers normally expose an OpenAI-compatible `/models` API. API keys should be supplied through environment variables or the secure interactive prompt, never stored in `providers.json`.
@@ -47,6 +48,8 @@ User data:  %USERPROFILE%\.byok-cli-hub\
 ```
 
 The installer stages and smoke-tests a complete application snapshot before switching it into place. An existing `providers.json` is preserved. If installation fails, the previous application, extension, user `PATH`, and any data files created or replaced by that attempt are restored. The application directory is added to the user `PATH` unless `BYOK_CLI_HUB_SKIP_PATH_UPDATE=1` or `-SkipPathUpdate` is supplied.
+
+The `byok-cli-hub` CMD launcher applies every resolved `environment` entry for the selected CLI and provider to the current CMD console. These values remain available after the launched CLI exits and are inherited by the next invocation. A short-lived environment plan is created under `%TEMP%`, called by the launcher, and deleted before the CLI starts; because it can contain the API key, an interrupted launcher may require manual removal of an abandoned `byok-cli-hub-env-*.cmd` file.
 
 The Copilot extension is opt-in:
 
@@ -124,7 +127,7 @@ Use `--check` to validate prerequisites and paths without writing files. Upgradi
 
 ## Distribution and upgrades
 
-This project continues to be distributed as source in `0.0.3`; it does not provide an MSI, DEB/RPM, global npm package, or automatic updater.
+This project continues to be distributed as source in `0.0.4`; it does not provide an MSI, DEB/RPM, global npm package, or automatic updater.
 
 Repo mode means running `bin\win\run.cmd` or `bin/linux/run.sh` directly from a clone. Upgrade by running `git pull` or checking out a newer release tag. Repo mode does not copy an application snapshot or modify `PATH`, so it has no separate uninstall step.
 
@@ -162,6 +165,30 @@ The installed example contains the full schema. A provider entry resembles:
         "COPILOT_PROVIDER_API_KEY": "{api_key}",
         "COPILOT_MODEL": "{model}"
       }
+    },
+    "opencode": {
+      "name": "OpenCode CLI",
+      "command": "opencode",
+      "args": [],
+      "adapter": "opencode-config-v1",
+      "configEnvName": "OPENCODE_CONFIG",
+      "configFileName": "opencode.json",
+      "template": {
+        "$schema": "https://opencode.ai/config.json",
+        "provider": {
+          "{opencode_provider_id}": {
+            "npm": "@ai-sdk/openai-compatible",
+            "name": "{provider_name} (BYOK CLI Hub)",
+            "options": {
+              "baseURL": "{url}",
+              "apiKey": "{api_key_ref}"
+            },
+            "models": "{models}"
+          }
+        },
+        "model": "{opencode_provider_id}/{model}"
+      },
+      "environment": {}
     }
   },
   "providers": {
@@ -186,6 +213,12 @@ The installed example contains the full schema. A provider entry resembles:
 ```
 
 A provider's `environment` may contain provider-wide environment templates directly. It may also contain a CLI ID whose value is another environment map for CLI-specific overrides; CLI-specific values take precedence over provider-wide values.
+
+In an OpenCode config template, `{api_key_ref}` is valid only as the complete `provider.*.options.apiKey` value. The Manager renders it as `{env:BYOK_CLI_HUB_OPENCODE_API_KEY}` (or removes `options.apiKey` for an optional provider with no key); it never expands to the plaintext credential. Environment maps continue to use `{api_key}` when the resolved key itself must be assigned to a runtime environment variable.
+
+When OpenCode is selected, the Manager writes the generated OpenCode config only to `<data-dir>/opencode.json` and launches OpenCode with `OPENCODE_CONFIG` pointing to that absolute path. The generated file contains the selected provider, all resolved model IDs, and an `{env:BYOK_CLI_HUB_OPENCODE_API_KEY}` reference when a key is required or supplied; the plaintext key is passed in the launch environment and is never stored in the file. Existing user `providers.json` files are preserved during upgrades, so installations upgrading from an earlier release must add the `opencode` CLI entry shown above if they want to enable it. Do not run concurrent Hub sessions against the same data directory.
+
+OpenCode merges higher-precedence project, inline, and managed configuration after `OPENCODE_CONFIG`, so those sources may override the generated provider or default model. Diagnose the final merged result with `opencode debug config` and `opencode models <runtime-provider-id>`; the Manager prints the runtime provider ID before launch.
 
 Set the key outside the file:
 
@@ -213,6 +246,7 @@ Windows options use PowerShell syntax:
 
 ```bat
 byok-cli-hub -Cli copilot -Provider my-provider -Model my-model
+byok-cli-hub -Cli opencode -Provider my-provider -Model my-model
 byok-cli-hub -Provider my-provider -DryRun
 byok-cli-hub -Provider my-provider -Refresh
 ```
@@ -221,14 +255,15 @@ Linux / WSL options use GNU-style long names:
 
 ```bash
 byok-cli-hub --cli copilot --provider my-provider --model my-model
+byok-cli-hub --cli opencode --provider my-provider --model my-model
 byok-cli-hub --provider my-provider --dry-run
 byok-cli-hub --provider my-provider --refresh
 byok-cli-hub --provider my-provider -- --additional-cli-argument
 ```
 
-`--dry-run` / `-DryRun` does not fetch models, update cache/state, or launch a child. It prints a redacted execution plan. Refresh updates cache/state and returns without launching the CLI.
+`--dry-run` / `-DryRun` does not fetch models, update cache/state, apply a caller environment, or launch a child. It prints a redacted execution plan. Refresh updates cache/state and returns without launching the CLI.
 
-The underlying executable never modifies its caller's environment. The installed Linux/WSL Bash integration sources fixed, version-controlled function code, then receives the resolved plan as strictly parsed data over a private file descriptor. It never evaluates generated shell code. Secrets are redacted as `[set]` in human-readable output.
+On Windows, the public CMD launcher applies the environment in the caller console; invoking the PowerShell Manager script directly remains child-only. On Linux/WSL, the installed Bash integration sources fixed, version-controlled function code and applies a strictly parsed plan received over a private file descriptor; invoking the executable directly remains child-only. Secrets are redacted as `[set]` in human-readable output.
 
 ## Switching models in Copilot
 
@@ -293,8 +328,8 @@ npm run test:linux-installer
 npm run test:all:linux
 ```
 
-`npm test` is platform-aware: Windows runs Node, PowerShell smoke/HTTP, and Windows installer suites; Linux runs Node, caller-shell integration, and Linux installer suites. A current Windows run contains 22 Node/cross-runtime assertions in addition to the PowerShell and installer suites. The Windows and Ubuntu jobs in `.github/workflows/test.yml` run this same entry point in CI.
+`npm test` is platform-aware: Windows runs Node, PowerShell smoke/HTTP, caller-CMD, and Windows installer suites; Linux runs Node, caller-shell integration, and Linux installer suites. The Windows and Ubuntu jobs in `.github/workflows/test.yml` run this same entry point in CI.
 
-The tests cover the shared Node/PowerShell config contract (including strict scalar types and Windows command-path variants), damaged-file preservation, endpoint-scoped cache freshness, bounded HTTP reads and stalled-body deadlines, empty model arrays, header-injection rejection and API-key-safe errors, strict arguments, redaction, side-effect-free dry-run, active and abandoned cross-runtime locks, caller-shell environment apply/switch/deactivate behavior, FD protocol validation, xtrace redaction, Windows `0.0.1` migration and rollback, managed-path relocation guards, and Windows/Linux data-aware installation transactions. Linux failure injection also verifies old-to-new shell-library migration, legacy-helper ownership and rollback, unknown-file preservation, example-backup copy failure, and marker/config `chmod` failure.
+The tests cover the shared Node/PowerShell config contract, OpenCode config generation and launch loading, damaged-file preservation, endpoint-scoped cache freshness, bounded HTTP reads and stalled-body deadlines, header-injection rejection and API-key-safe errors, strict arguments, redaction, side-effect-free dry-run, active and abandoned cross-runtime locks, caller-shell environment apply/switch/deactivate behavior, FD protocol validation, xtrace redaction, Windows `0.0.1` migration and rollback, managed-path relocation guards, and Windows/Linux data-aware installation transactions.
 
 The completed `0.0.2` review and remediation record is in [`doc/improve_0.0.2.md`](doc/improve_0.0.2.md).

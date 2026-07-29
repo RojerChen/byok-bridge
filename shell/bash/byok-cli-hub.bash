@@ -454,7 +454,17 @@ _byok_cli_hub_invoke() {
   fi
 
   _BYOK_CLI_HUB_LOCAL_COMMAND=''
-  "$_BYOK_CLI_HUB_RESOLVED_COMMAND" "${_BYOK_CLI_HUB_LOCAL_ARGS[@]}"
+  local _BYOK_CLI_HUB_LOCAL_CHILD_STATUS
+  if "$_BYOK_CLI_HUB_RESOLVED_COMMAND" "${_BYOK_CLI_HUB_LOCAL_ARGS[@]}"; then
+    _BYOK_CLI_HUB_LOCAL_CHILD_STATUS=0
+  else
+    _BYOK_CLI_HUB_LOCAL_CHILD_STATUS=$?
+  fi
+  if [[ "$_BYOK_CLI_HUB_LOCAL_CHILD_STATUS" != '0' && -n "${_BYOK_CLI_HUB_ACTIVE_KEYS[OPENCODE_CONFIG]+present}" ]]; then
+    printf 'OpenCode exited with code %s. Generated config: %s\n' "$_BYOK_CLI_HUB_LOCAL_CHILD_STATUS" "${OPENCODE_CONFIG:-unknown}" >&2
+    printf '%s\n' 'Check the merged configuration with: opencode debug config' >&2
+  fi
+  return "$_BYOK_CLI_HUB_LOCAL_CHILD_STATUS"
 }
 
 byok-cli-hub() {

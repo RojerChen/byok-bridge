@@ -36,7 +36,7 @@ export function isExecutableInPath(command) {
  * Launches the selected CLI executable with resolved arguments and environment map.
  */
 export async function launchCli(command, args = [], envMap = {}, options = {}) {
-  const { dryRun = false, sensitiveKeys = new Set() } = options;
+  const { dryRun = false, sensitiveKeys = new Set(), missingKeys = new Set() } = options;
 
   if (dryRun) {
     console.log('[DRY-RUN] Resolved CLI Command:', command);
@@ -44,7 +44,7 @@ export async function launchCli(command, args = [], envMap = {}, options = {}) {
     console.log('[DRY-RUN] Environment Map (Redacted):');
     for (const [k, v] of Object.entries(envMap)) {
       if (sensitiveKeys.has(k)) {
-        console.log(`  ${k}: ${v ? '[set]' : '[not set]'}`);
+        console.log(`  ${k}: ${missingKeys.has(k) ? '[missing]' : (v ? '[set]' : '[not set]')}`);
       } else {
         console.log(`  ${k}: ${v}`);
       }

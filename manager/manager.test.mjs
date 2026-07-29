@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { getByokDataDir, readState, writeState, readCache, writeCache, writeJsonAtomic, updateCacheForProvider, getCachedModelIds, testModelCacheFresh } from './lib/state.mjs';
 import { loadProviderConfig, addProvider, normalizeConfig, validateConfig, ConfigValidationError } from './lib/config.mjs';
 import { expandTemplateValue, resolveCliArgs, buildRuntimeEnvMap, resolveChosenModel, getSensitiveEnvKeys } from './lib/env.mjs';
-import { fetchModels, getSafeModelFetchErrorMessage } from './lib/http.mjs';
+import { fetchModels, getSafeModelFetchErrorMessage, canUseStaleCacheForModelFetchError } from './lib/http.mjs';
 import { launchCli } from './lib/launcher.mjs';
 import { parseArgs, UsageError } from './lib/args.mjs';
 import { encodeShellPlan, ShellPlanError } from './lib/shell-plan.mjs';
@@ -177,6 +177,29 @@ describe('BYOK CLI Hub Node Manager Unit & Integration Tests', () => {
     assert.deepEqual(models, ['mock-model-1', 'mock-model-2']);
 
     await new Promise((resolve) => server.close(resolve));
+  });
+
+  test('Only transport and authentication failures permit stale model cache fallback', async () => {
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{ invalid json');
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const baseUrl = `http://127.0.0.1:${server.address().port}`;
+      await assert.rejects(fetchModels({ modelsApi: { path: '/models' } }, baseUrl), error => {
+        assert.equal(canUseStaleCacheForModelFetchError(error), false);
+        assert.match(error.message, /invalid JSON/);
+        return true;
+      });
+    } finally {
+      await new Promise(resolve => server.close(resolve));
+    }
+
+    await assert.rejects(fetchModels({ modelsApi: { path: '/models' } }, 'http://127.0.0.1:1'), error => {
+      assert.equal(canUseStaleCacheForModelFetchError(error), true);
+      return true;
+    });
   });
 
   test('HTTP header values reject injection without leaking API keys', async () => {

@@ -134,7 +134,7 @@ bash "$REPO_ROOT/bin/linux/install.sh" \
   --with-extension
 
 [[ -f "$APP_DIR/.byok-cli-hub-install.json" ]]
-node -e 'const m=require(process.argv[1]); if(m.appVersion!=="0.0.3"||m.withExtension!==true) process.exit(1)' "$APP_DIR/.byok-cli-hub-install.json"
+node -e 'const m=require(process.argv[1]); if(m.appVersion!=="0.0.4"||m.withExtension!==true) process.exit(1)' "$APP_DIR/.byok-cli-hub-install.json"
 [[ -f "$DATA_DIR/providers.json" ]]
 [[ -f "$DATA_DIR/.byok-cli-hub-data" ]]
 grep -q '^# BYOK_CLI_HUB_MANAGED_SHIM=1$' "$BIN_DIR/byok-cli-hub"
@@ -159,7 +159,7 @@ fi
 
 # A manifest from a newer application version must not be downgraded.
 cp "$APP_DIR/.byok-cli-hub-install.json" "$TEST_ROOT/manifest-backup.json"
-node -e 'const fs=require("node:fs"),p=process.argv[1],m=JSON.parse(fs.readFileSync(p,"utf8"));m.appVersion="0.0.4";fs.writeFileSync(p,JSON.stringify(m,null,2)+"\n")' "$APP_DIR/.byok-cli-hub-install.json"
+node -e 'const fs=require("node:fs"),p=process.argv[1],m=JSON.parse(fs.readFileSync(p,"utf8"));m.appVersion="0.0.5";fs.writeFileSync(p,JSON.stringify(m,null,2)+"\n")' "$APP_DIR/.byok-cli-hub-install.json"
 if bash "$REPO_ROOT/bin/linux/install.sh" \
   --install-dir "$APP_DIR" \
   --data-dir "$DATA_DIR" \

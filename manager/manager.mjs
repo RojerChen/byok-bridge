@@ -14,18 +14,29 @@ import { loadProviderConfig, addProvider } from './lib/config.mjs';
 import {
   resolveCliArgs,
   buildRuntimeEnvMap,
+  buildAdapterRuntimeEnvMap,
   resolveEnvValue,
   getApiKeyEnvName,
   getCliSupportStatus,
   resolveChosenModel,
+  resolveChosenModelSelection,
   getApiKeySource,
   getSensitiveEnvKeys
 } from './lib/env.mjs';
 import { parseArgs, UsageError } from './lib/args.mjs';
-import { fetchModels, getSafeModelFetchErrorMessage } from './lib/http.mjs';
+import { fetchModels, getSafeModelFetchErrorMessage, canUseStaleCacheForModelFetchError } from './lib/http.mjs';
 import { readMaskedPrompt, readInput, selectMenuItem } from './lib/prompt.mjs';
 import { isExecutableInPath, launchCli } from './lib/launcher.mjs';
 import { writeShellPlan } from './lib/shell-plan.mjs';
+import {
+  OPENCODE_ADAPTER,
+  OPENCODE_API_KEY_ENV,
+  OPENCODE_CONFIG_ENV,
+  buildOpenCodeConfig,
+  getOpenCodeConfigPath,
+  getOpenCodeProviderId,
+  writeOpenCodeConfig
+} from './lib/opencode.mjs';
 
 function printHelp() {
   console.log(`
@@ -282,7 +293,7 @@ async function main() {
         fetchedModelIds = await fetchModels(selectedProvider, baseUrl, apiKey);
       } catch (err) {
         const safeMessage = getSafeModelFetchErrorMessage(err, apiKey);
-        if (!options.refresh && cachedModels.length > 0) {
+        if (!options.refresh && cachedModels.length > 0 && canUseStaleCacheForModelFetchError(err)) {
           availableModels = cachedModels;
           console.warn(`Warning: model refresh failed; using stale cache for '${selectedProvider.id}': ${safeMessage}`);
         } else {
@@ -307,14 +318,45 @@ async function main() {
   // --- 5. Model Selection & Dynamic Map Building --------------------------
   const envModel = resolveEnvValue(selectedCli.modelEnvName);
   const providerChanged = rememberedProviderId && selectedProvider.id !== rememberedProviderId;
-  const chosenModel = resolveChosenModel(options.model, envModel, rememberedModel, availableModels, providerChanged);
+  const isOpenCode = selectedCli.adapter === OPENCODE_ADAPTER;
+  const modelSelection = isOpenCode
+    ? resolveChosenModelSelection(options.model, envModel, rememberedModel, availableModels, providerChanged)
+    : {
+        model: resolveChosenModel(options.model, envModel, rememberedModel, availableModels, providerChanged),
+        source: options.model ? 'option' : (envModel ? 'environment' : 'state-or-fallback')
+      };
+  const chosenModel = modelSelection.model;
+  if (!chosenModel) {
+    console.error('Error: No model is available. Run again with --refresh or specify --model explicitly.');
+    process.exit(1);
+  }
 
   const resolvedCliArgs = resolveCliArgs(selectedCli, selectedProvider, baseUrl, chosenModel, apiKey, selectedProvider.id);
   const resolvedLaunchArgs = [...resolvedCliArgs, ...options.passthroughArgs];
 
-  const envMap = buildRuntimeEnvMap(selectedProvider, baseUrl, chosenModel, apiKey, selectedProvider.id, selectedCli);
+  const envMap = isOpenCode
+    ? buildAdapterRuntimeEnvMap(selectedProvider, baseUrl, chosenModel, apiKey, selectedProvider.id, selectedCli)
+    : buildRuntimeEnvMap(selectedProvider, baseUrl, chosenModel, apiKey, selectedProvider.id, selectedCli);
   envMap.BYOK_CLI_HUB_DATA_DIR = dataDir;
+  let openCodeOutput = null;
+  let openCodeConfigPath = null;
+  if (isOpenCode && !options.refresh) {
+    openCodeConfigPath = getOpenCodeConfigPath(dataDir, selectedCli.configFileName);
+    openCodeOutput = buildOpenCodeConfig(selectedCli.template, {
+      providerId: selectedProvider.id,
+      providerName: selectedProvider.name,
+      baseUrl,
+      apiKey,
+      apiKeyRequired: selectedProvider.apiKeyRequired,
+      availableModels,
+      chosenModel,
+      chosenModelSource: modelSelection.source
+    });
+    envMap[OPENCODE_CONFIG_ENV] = openCodeConfigPath;
+    if (apiKey) envMap[OPENCODE_API_KEY_ENV] = apiKey;
+  }
   const sensitiveKeys = getSensitiveEnvKeys(envMap, apiKey);
+  if (isOpenCode && Object.hasOwn(envMap, OPENCODE_API_KEY_ENV)) sensitiveKeys.add(OPENCODE_API_KEY_ENV);
 
   // --- 6. Save State ------------------------------------------------------
   const newState = {
@@ -325,16 +367,44 @@ async function main() {
     providerType: selectedProvider.type || 'openai',
     baseUrl,
     model: chosenModel,
+    modelSource: modelSelection.source,
+    ...(isOpenCode ? {
+      runtimeProviderId: openCodeOutput?.runtimeProviderId || getOpenCodeProviderId(selectedProvider.id),
+      runtimeConfigType: OPENCODE_ADAPTER
+    } : {}),
     apiKeySource: getApiKeySource(keyEnvName, fromPrompt, Boolean(options.apiKey), apiKey),
     updatedAt: new Date().toISOString()
   };
+
+  const command = selectedCli.command || 'copilot';
+  const shouldLaunch = !options.dryRun && !options.refresh;
+  if (shouldLaunch && !isExecutableInPath(command)) {
+    console.error(`Error: The command '${command}' was not found in PATH.`);
+    console.error(`Please ensure '${command}' is installed and accessible in your environment.`);
+    return 5;
+  }
+  if (shouldLaunch && isOpenCode) {
+    writeOpenCodeConfig(openCodeConfigPath, openCodeOutput.config);
+    console.log(`Generated OpenCode config: ${openCodeConfigPath}`);
+    console.log(`OpenCode runtime provider: ${openCodeOutput.runtimeProviderId} (${openCodeOutput.models.length} models)`);
+  }
   if (!options.dryRun) writeState(newState, dataDir);
 
   // --- 7. Display a redacted environment plan -----------------------------
+  if (isOpenCode) {
+    const keyStatus = apiKey
+      ? '[set]'
+      : (selectedProvider.apiKeyRequired === false ? '[not required]' : '[missing]');
+    console.log(`OpenCode API key: ${keyStatus}`);
+  }
   console.log(`\n\x1b[36mBYOK Environment Variables:\x1b[0m`);
   for (const [k, v] of Object.entries(envMap)) {
     if (sensitiveKeys.has(k)) {
-      console.log(`  ${k}=${v ? '[set]' : '[not set]'}`);
+      const missingRequiredOpenCodeKey = isOpenCode
+        && k === OPENCODE_API_KEY_ENV
+        && !v
+        && selectedProvider.apiKeyRequired !== false;
+      console.log(`  ${k}=${missingRequiredOpenCodeKey ? '[missing]' : (v ? '[set]' : '[not set]')}`);
     } else {
       console.log(`  ${k}=${v}`);
     }
@@ -348,7 +418,6 @@ async function main() {
   }
 
   // --- 8. Launch CLI ------------------------------------------------------
-  const command = selectedCli.command || 'copilot';
   if (options.dryRun) {
     const exitCode = await launchCli(command, resolvedLaunchArgs, envMap, {
       dryRun: true,
@@ -359,11 +428,6 @@ async function main() {
   }
 
   if (options.internalShellPlanFd !== null) {
-    if (!isExecutableInPath(command)) {
-      console.error(`Error: The command '${command}' was not found in PATH.`);
-      console.error(`Please ensure '${command}' is installed and accessible in your environment.`);
-      return 5;
-    }
     emitShellPlan(options, {
       action: 'launch',
       command,
@@ -377,6 +441,11 @@ async function main() {
     dryRun: false,
     sensitiveKeys
   });
+  if (isOpenCode && exitCode !== 0) {
+    console.error(`OpenCode exited with code ${exitCode}. Generated config: ${openCodeConfigPath}`);
+    console.error('Check the merged configuration with: opencode debug config');
+    console.error(`Check provider models with: opencode models ${openCodeOutput.runtimeProviderId}`);
+  }
   return exitCode;
 }
 

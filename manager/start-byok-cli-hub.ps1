@@ -13,6 +13,7 @@ param(
     [string]$Model,
     [switch]$DryRun,
     [switch]$Refresh,
+    [string]$EnvFile,
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$LaunchArgs
 )
 

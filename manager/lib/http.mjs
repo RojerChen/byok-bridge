@@ -3,6 +3,18 @@
 const DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 
+export class ModelFetchError extends Error {
+  constructor(message, category, options = {}) {
+    super(message, options);
+    this.name = 'ModelFetchError';
+    this.category = category;
+  }
+}
+
+export function canUseStaleCacheForModelFetchError(error) {
+  return error instanceof ModelFetchError && ['transport', 'auth'].includes(error.category);
+}
+
 export function getSafeModelFetchErrorMessage(error, apiKey = '') {
   const fallback = 'Model fetch failed.';
   if (!error || typeof error.message !== 'string' || !error.message) return fallback;
@@ -43,7 +55,7 @@ function buildModelsUrl(baseUrl, apiPath) {
 async function readBoundedBody(response, maximumBytes) {
   const declaredLength = Number(response.headers.get('content-length'));
   if (Number.isFinite(declaredLength) && declaredLength > maximumBytes) {
-    throw new Error(`Provider response exceeds the ${maximumBytes}-byte limit.`);
+    throw new ModelFetchError(`Provider response exceeds the ${maximumBytes}-byte limit.`, 'response');
   }
   if (!response.body) return '';
 
@@ -58,7 +70,7 @@ async function readBoundedBody(response, maximumBytes) {
       total += value.byteLength;
       if (total > maximumBytes) {
         await reader.cancel();
-        throw new Error(`Provider response exceeds the ${maximumBytes}-byte limit.`);
+        throw new ModelFetchError(`Provider response exceeds the ${maximumBytes}-byte limit.`, 'response');
       }
       text += decoder.decode(value, { stream: true });
     }
@@ -110,11 +122,15 @@ export async function fetchModels(
       redirect: 'error'
     });
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status} ${response.statusText || ''} when fetching models from ${safeOrigin}`.trim());
+      const category = [401, 403].includes(response.status) ? 'auth' : 'transport';
+      throw new ModelFetchError(
+        `HTTP ${response.status} ${response.statusText || ''} when fetching models from ${safeOrigin}`.trim(),
+        category
+      );
     }
     const contentType = response.headers.get('content-type') || '';
     if (!/(^|[+\/])json(?:;|$)/i.test(contentType)) {
-      throw new Error(`Expected a JSON response from ${safeOrigin}; received '${contentType || 'unknown'}'.`);
+      throw new ModelFetchError(`Expected a JSON response from ${safeOrigin}; received '${contentType || 'unknown'}'.`, 'response');
     }
 
     const rawBody = await readBoundedBody(response, maximumBytes);
@@ -122,14 +138,17 @@ export async function fetchModels(
     try {
       data = JSON.parse(rawBody);
     } catch {
-      throw new Error(`Provider at ${safeOrigin} returned invalid JSON.`);
+      throw new ModelFetchError(`Provider at ${safeOrigin} returned invalid JSON.`, 'response');
     }
 
     const itemsPath = provider?.modelsApi?.itemsPath || 'data';
     const idPath = provider?.modelsApi?.idPath || 'id';
     let items = getValueByPath(data, itemsPath);
     if (!Array.isArray(items)) items = Array.isArray(data) ? data : null;
-    if (!items) throw new Error(`Provider response from ${safeOrigin} does not contain an array at '${itemsPath}'.`);
+    if (!items) throw new ModelFetchError(
+      `Provider response from ${safeOrigin} does not contain an array at '${itemsPath}'.`,
+      'response'
+    );
 
     const ids = [];
     const seen = new Set();
@@ -144,7 +163,10 @@ export async function fetchModels(
     return ids;
   } catch (error) {
     if (error.name === 'AbortError') {
-      throw new Error(`Request timed out after ${timeoutMs / 1000}s when connecting to ${safeOrigin}.`);
+      throw new ModelFetchError(`Request timed out after ${timeoutMs / 1000}s when connecting to ${safeOrigin}.`, 'transport');
+    }
+    if (!(error instanceof ModelFetchError) && error instanceof TypeError) {
+      throw new ModelFetchError(`Unable to fetch models from ${safeOrigin}.`, 'transport', { cause: error });
     }
     throw error;
   } finally {

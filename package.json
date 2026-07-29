@@ -1,6 +1,6 @@
 {
   "name": "byok-cli-hub",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "private": true,
   "type": "module",
   "description": "Configuration-driven BYOK launcher and hub for multiple AI CLIs",

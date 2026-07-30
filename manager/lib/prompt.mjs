@@ -1,12 +1,26 @@
 import readline from 'node:readline';
 
+export class InputCancelledError extends Error {
+  constructor() {
+    super('Input cancelled.');
+    this.name = 'InputCancelledError';
+    this.exitCode = 130;
+  }
+}
+
+export class NonInteractiveInputError extends Error {
+  constructor() {
+    super('Interactive input is unavailable because stdin or stdout is not a TTY.');
+    this.name = 'NonInteractiveInputError';
+    this.exitCode = 1;
+  }
+}
+
 /**
  * Reads user input securely without echoing (masked prompt for secrets/API keys).
  */
 export async function readMaskedPrompt(promptText = 'API key: ') {
-  if (!process.stdin.isTTY) {
-    throw new Error('Non-TTY environment detected. Cannot prompt for secret API key interactively.');
-  }
+  if (!process.stdin.isTTY || !process.stdout.isTTY) throw new NonInteractiveInputError();
 
   return new Promise((resolve, reject) => {
     process.stdout.write(promptText);
@@ -19,7 +33,10 @@ export async function readMaskedPrompt(promptText = 'API key: ') {
       reject(error);
     };
 
-    const onSigint = () => rejectWithCode('Input cancelled.', 130);
+    const onSigint = () => {
+      cleanup();
+      reject(new InputCancelledError());
+    };
     const onSigterm = () => rejectWithCode('Input terminated.', 143);
     const onSighup = () => rejectWithCode('Input terminated.', 129);
     const onError = (error) => {
@@ -86,19 +103,27 @@ export async function readMaskedPrompt(promptText = 'API key: ') {
  * Reads standard text line input from user.
  */
 export async function readInput(promptText = '', defaultValue = '') {
-  if (!process.stdin.isTTY) {
-    return defaultValue;
-  }
+  if (!process.stdin.isTTY || !process.stdout.isTTY) throw new NonInteractiveInputError();
 
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
   });
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const fullPrompt = defaultValue ? `${promptText} (default: ${defaultValue}): ` : `${promptText}: `;
-    rl.question(fullPrompt, (answer) => {
+    const cleanup = () => {
       rl.close();
+      process.removeListener('SIGINT', onSigint);
+    };
+    const onSigint = () => {
+      cleanup();
+      reject(new InputCancelledError());
+    };
+    process.once('SIGINT', onSigint);
+    rl.on('SIGINT', onSigint);
+    rl.question(fullPrompt, (answer) => {
+      cleanup();
       const trimmed = (answer || '').trim();
       resolve(trimmed ? trimmed : defaultValue);
     });
@@ -106,34 +131,16 @@ export async function readInput(promptText = '', defaultValue = '') {
 }
 
 /**
- * Displays a numbered menu and prompts for selection.
+ * Reads a numeric menu option.  The menu body is rendered by the caller so an
+ * invalid entry can repeat only the prompt, as required by the UI contract.
  */
-export async function selectMenuItem(title, items, defaultIndex = 0, formatter = (item) => String(item)) {
-  if (!items || items.length === 0) throw new Error('Cannot select from an empty menu.');
-
-  if (items.length === 1) {
-    return { item: items[0], index: 0 };
-  }
-
-  console.log(title);
-  for (let i = 0; i < items.length; i++) {
-    const isDefault = (i === defaultIndex);
-    const itemStr = formatter(items[i], i);
-    const num = i + 1;
-    if (isDefault && process.stdout.isTTY) {
-      // Highlight default option in green (\x1b[32m ... \x1b[0m)
-      console.log(`\x1b[32m${num}. ${itemStr}\x1b[0m`);
-    } else {
-      console.log(`${num}. ${itemStr}`);
+export async function readNumberSelection(promptText, min, max, defaultValue, { onInvalid } = {}) {
+  while (true) {
+    const answer = await readInput(promptText, String(defaultValue));
+    if (/^\d+$/.test(answer) && Number.isSafeInteger(Number(answer))) {
+      const value = Number(answer);
+      if (value >= min && value <= max) return value;
     }
+    onInvalid?.();
   }
-
-  const defaultNum = defaultIndex + 1;
-  const promptText = `Select option [1-${items.length}] (default: ${defaultNum})`;
-  const answer = await readInput(promptText, String(defaultNum));
-
-  let choiceIdx = parseInt(answer, 10) - 1;
-  if (isNaN(choiceIdx) || choiceIdx < 0 || choiceIdx >= items.length) throw new Error('Invalid menu selection.');
-
-  return { item: items[choiceIdx], index: choiceIdx };
 }

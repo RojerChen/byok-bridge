@@ -19,7 +19,8 @@ const VALUE_OPTIONS = new Map([
 const FLAG_OPTIONS = new Map([
   ['--refresh', 'refresh'],
   ['--dry-run', 'dryRun'],
-  ['--self-check', 'selfCheck']
+  ['--self-check', 'selfCheck'],
+  ['--no-clear', 'noClear']
 ]);
 
 export function parseArgs(argv) {
@@ -32,6 +33,7 @@ export function parseArgs(argv) {
     refresh: false,
     dryRun: false,
     selfCheck: false,
+    noClear: false,
     help: false,
     dataDir: null,
     internalShellPlanFd: null,

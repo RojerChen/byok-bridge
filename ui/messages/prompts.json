@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "selectCli": "Select CLI [{min}-{max}] (default: {default})",
+  "selectProvider": "Select provider [{min}-{max}] (default: {default})",
+  "apiKey": "API key for '{provider}'",
+  "back": "0. Back",
+  "addProvider": "Add Provider",
+  "exit": "Exit",
+  "providerName": "Provider display name",
+  "baseUrl": "Base URL",
+  "optionalApiKey": "API key (optional, press Enter to skip)"
+}

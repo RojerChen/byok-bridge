@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "preferredWidth": 60,
+  "symbols": {
+    "default": "*",
+    "success": "[OK]",
+    "warning": "[!]",
+    "error": "[X]",
+    "info": "[i]"
+  }
+}

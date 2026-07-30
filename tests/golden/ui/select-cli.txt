@@ -1,0 +1,17 @@
++----------------------------------------------------------+
+| BYOK CLI Hub                                             |
+| BYOK Manager for AI Coding CLIs                          |
++----------------------------------------------------------+
+
+[ Step 1 of 2 ]  Select AI Coding CLI
+------------------------------------------------------------
+
+* 1. GitHub Copilot CLI
+  2. OpenCode CLI
+  0. Exit
+
+------------------------------------------------------------
+Enter a number, then press Enter. Ctrl+C cancels.
+Select CLI [1-2] (default: 1): 2
+
+[i] Selected CLI: OpenCode CLI

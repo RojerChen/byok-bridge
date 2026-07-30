@@ -1,0 +1,5 @@
+Provider: OpenAI
+Model: gpt-4.1
+API key: [set]
+[i] Configuration applied.
+[i] Launching GitHub Copilot CLI...

@@ -1,0 +1,5 @@
+Select CLI [1-2] (default: 1): text
+[X] Invalid selection. Try again.
+Select CLI [1-2] (default: 1): 3
+[X] Invalid selection. Try again.
+Select CLI [1-2] (default: 1):

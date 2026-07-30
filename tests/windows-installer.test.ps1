@@ -24,6 +24,8 @@ function Assert-InstalledReadmeDocumentation([string]$ApplicationDir) {
         Assert-True (Test-Path -LiteralPath (Join-Path $ApplicationDir $relativePath)) "Installed README link does not resolve: $($link.Groups[1].Value)"
     }
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $ApplicationDir 'doc\plan.md'))) 'Internal planning file was included in the application snapshot.'
+    Assert-True (Test-Path -LiteralPath (Join-Path $ApplicationDir 'ui\theme.json')) 'Installed UI theme is missing.'
+    Assert-True (Test-Path -LiteralPath (Join-Path $ApplicationDir 'ui\messages\app.json')) 'Installed UI messages are missing.'
 }
 
 function Set-TestEnvironment([string]$CaseRoot) {

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "selectedCli": "Selected CLI: {cli}",
+  "selectedProvider": "Selected provider: {provider}",
+  "configurationApplied": "Configuration applied.",
+  "launching": "Launching {cli}...",
+  "exited": "Operation exited."
+}

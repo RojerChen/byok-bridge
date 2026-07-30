@@ -1,0 +1,2 @@
+API key for 'OpenAI': <masked input>
+[X] API key is required for provider 'OpenAI'.

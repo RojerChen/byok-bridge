@@ -405,6 +405,7 @@ BASH_RC_BACKUP="${BASH_RC_TARGET}.byok-backup.$$"
 
 cp -R "$REPO_ROOT/manager" "$STAGING_DIR/"
 cp -R "$REPO_ROOT/config" "$STAGING_DIR/"
+cp -R "$REPO_ROOT/ui" "$STAGING_DIR/"
 cp -R "$REPO_ROOT/bin" "$STAGING_DIR/"
 cp -R "$REPO_ROOT/shell" "$STAGING_DIR/"
 cp -R "$REPO_ROOT/libexec" "$STAGING_DIR/"

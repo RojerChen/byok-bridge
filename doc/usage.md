@@ -15,6 +15,7 @@ byok-cli-hub -Cli copilot -Provider my-provider -Model my-model
 byok-cli-hub -Cli opencode -Provider my-provider -Model my-model
 byok-cli-hub -Provider my-provider -DryRun
 byok-cli-hub -Provider my-provider -Refresh
+byok-cli-hub -NoClear
 ```
 
 Linux / WSL options use GNU-style long names:
@@ -24,10 +25,15 @@ byok-cli-hub --cli copilot --provider my-provider --model my-model
 byok-cli-hub --cli opencode --provider my-provider --model my-model
 byok-cli-hub --provider my-provider --dry-run
 byok-cli-hub --provider my-provider --refresh
+byok-cli-hub --no-clear
 byok-cli-hub --provider my-provider -- --additional-cli-argument
 ```
 
 `--dry-run` / `-DryRun` does not fetch models, update cache/state, apply a caller environment, or launch a child. It prints a redacted execution plan. Refresh updates cache/state and returns without launching the CLI.
+
+Interactive terminals use a clean wizard screen by default. Use `--no-clear` on Linux/WSL, `-NoClear` on Windows, or set `BYOK_UI_HISTORY=true` to keep every screen in the terminal for debugging or transcript capture.
+
+Colors are enabled only for interactive terminals. Set `NO_COLOR` or `BYOK_UI_COLOR=0` to force the plain-text layout.
 
 On Windows, the public CMD launcher applies the environment in the caller console; invoking the PowerShell Manager script directly remains child-only. On Linux/WSL, the installed Bash integration sources fixed, version-controlled function code and applies a strictly parsed plan received over a private file descriptor; invoking the executable directly remains child-only. Secrets are redacted as `[set]` in human-readable output.
 

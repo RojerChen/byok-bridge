@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "invalidSelection": "Invalid selection. Try again.",
+  "cancelled": "Operation cancelled.",
+  "apiKeyRequired": "API key is required for provider '{provider}'.",
+  "baseUrlRequired": "A base URL is required.",
+  "providerNameRequired": "Provider name is required."
+}

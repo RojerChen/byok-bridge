@@ -25,7 +25,25 @@ import {
 } from './lib/env.mjs';
 import { parseArgs, UsageError } from './lib/args.mjs';
 import { fetchModels, getSafeModelFetchErrorMessage, canUseStaleCacheForModelFetchError } from './lib/http.mjs';
-import { readMaskedPrompt, readInput, selectMenuItem } from './lib/prompt.mjs';
+import {
+  InputCancelledError,
+  NonInteractiveInputError,
+  readMaskedPrompt,
+  readInput,
+  readNumberSelection
+} from './lib/prompt.mjs';
+import {
+  loadUiResources,
+  renderUiHeader,
+  renderUiStep,
+  renderUiChoices,
+  renderUiProviderChoices,
+  renderUiSelectionSummary,
+  renderUiStatus,
+  renderUiError,
+  renderUiSummary,
+  uiMessage
+} from './lib/ui.mjs';
 import { isExecutableInPath, launchCli } from './lib/launcher.mjs';
 import { writeShellPlan } from './lib/shell-plan.mjs';
 import {
@@ -37,6 +55,8 @@ import {
   getOpenCodeProviderId,
   writeOpenCodeConfig
 } from './lib/opencode.mjs';
+
+let uiForErrors = null;
 
 function printHelp() {
   console.log(`
@@ -54,6 +74,7 @@ Options:
   --data-dir DIR    Override data directory
   --refresh         Refresh model cache from provider
   --dry-run         Display resolved parameters & env map without launching
+  --no-clear        Keep prior screens instead of clearing an interactive terminal
   --self-check      Run environment preflight checks
   --help, -h        Display this help message
 `);
@@ -91,29 +112,25 @@ function emitShellPlan(options, plan) {
   }
 }
 
-async function invokeAddProviderFlow(selectedCli, dataDir) {
-  console.log('\x1b[36m--- Add a new provider ---\x1b[0m');
-  const name = await readInput('Provider display name');
-  if (!name) {
-    console.error('Provider name is required.');
-    process.exit(1);
-  }
+function throwRenderedUiError(ui, messageId, values = {}) {
+  renderUiError(ui, messageId, values);
+  const error = new Error(uiMessage(ui, 'errors', messageId, values));
+  error.uiRendered = true;
+  throw error;
+}
 
-  const url = await readInput('Base URL (e.g. https://api.example.com/v1)');
-  if (!url) {
-    console.error('Base URL is required.');
-    process.exit(1);
-  }
+async function invokeAddProviderFlow(ui, selectedCli, dataDir) {
+  console.log('');
+  console.log(`--- ${uiMessage(ui, 'prompts', 'addProvider')} ---`);
+  const name = await readInput(uiMessage(ui, 'prompts', 'providerName'));
+  if (!name) throwRenderedUiError(ui, 'providerNameRequired');
 
-  let key = '';
-  if (process.stdin.isTTY) {
-    key = await readMaskedPrompt('API key (optional, press Enter to skip): ');
-  }
+  const url = await readInput(uiMessage(ui, 'prompts', 'baseUrl'));
+  if (!url) throwRenderedUiError(ui, 'baseUrlRequired');
 
+  const key = await readMaskedPrompt(`${uiMessage(ui, 'prompts', 'optionalApiKey')}: `);
   const result = addProvider(name, url, key, selectedCli, dataDir);
-  console.log(`\x1b[32mProvider '${name}' added with id '${result.id}'.\x1b[0m`);
-  console.log(`Config file: ${result.configPath}`);
-  console.log('Edit that file to customize advanced settings (type, headers, modelsApi, environment, etc.).\n');
+  console.log(`${ui.theme.symbols.success} Provider '${name}' added.`);
 
   if (key) {
     process.env[result.apiKeyEnvName] = key;
@@ -121,10 +138,7 @@ async function invokeAddProviderFlow(selectedCli, dataDir) {
 
   const freshConfig = loadProviderConfig(dataDir);
   const newProv = freshConfig.providers.find(p => p.id === result.id);
-  if (!newProv) {
-    console.error('Failed to reload newly added provider.');
-    process.exit(1);
-  }
+  if (!newProv) throw new Error('Failed to reload newly added provider.');
   return newProv;
 }
 
@@ -142,6 +156,29 @@ async function main() {
     if (exitCode === 0) emitShellPlan(options, { action: 'none' });
     return exitCode;
   }
+
+  // The shared UI files are loaded before any renderer-owned output or
+  // interactive prompt. Their location is anchored to the installed app root.
+  const ui = loadUiResources();
+  uiForErrors = ui;
+  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  const transcriptMode = options.noClear || /^(1|true|yes)$/i.test(process.env.BYOK_UI_HISTORY || '');
+  let headerRendered = false;
+  let showedInteractiveScreen = false;
+  const beginInteractive = ({ cli = null, provider = null } = {}) => {
+    if (!interactive) throw new NonInteractiveInputError();
+    showedInteractiveScreen = true;
+    if (!transcriptMode) {
+      console.clear();
+      renderUiHeader(ui);
+      headerRendered = true;
+      if (cli || provider) console.log('');
+      renderUiSelectionSummary(ui, { cli, provider });
+    } else if (!headerRendered) {
+      renderUiHeader(ui);
+      headerRendered = true;
+    }
+  };
 
   const config = loadProviderConfig(dataDir, { initialize: !options.dryRun });
   const state = readState(dataDir) || {};
@@ -162,78 +199,125 @@ async function main() {
     process.exit(1);
   }
 
+  const selectCliInteractively = async () => {
+    beginInteractive();
+    const defaultIndex = Math.max(0, clis.findIndex(cli => cli.id === rememberedCliId));
+    renderUiStep(ui, 1, ui.messages.app.steps.selectCli);
+    renderUiChoices(ui, clis.map((cli) => {
+      const suffix = getCliSupportStatus(cli) === 'partial' ? ' [partial]' : '';
+      return `${cli.name}${suffix}`;
+    }), defaultIndex, { includeExit: true });
+    const selectedNumber = await readNumberSelection(
+      uiMessage(ui, 'prompts', 'selectCli', { min: 1, max: clis.length, default: defaultIndex + 1 }),
+      0,
+      clis.length,
+      defaultIndex + 1,
+      { onInvalid: () => renderUiError(ui, 'invalidSelection') }
+    );
+    console.log('');
+    if (selectedNumber === 0) return { exit: true };
+    return clis[selectedNumber - 1];
+  };
+
+  const selectProviderInteractively = async () => {
+    beginInteractive({ cli: selectedCli.name });
+    const defaultIndex = Math.max(0, config.providers.findIndex(provider => provider.id === rememberedProviderId));
+    const items = [
+      ...config.providers,
+      ...(options.dryRun ? [] : [{ id: '+', name: uiMessage(ui, 'prompts', 'addProvider') }]),
+      { id: '__exit', name: uiMessage(ui, 'prompts', 'exit') }
+    ];
+    renderUiStep(ui, 2, ui.messages.app.steps.selectProvider);
+    renderUiProviderChoices(ui, config.providers.map(provider => provider.name), defaultIndex, {
+      includeAdd: !options.dryRun,
+      includeExit: true
+    });
+    const selectedNumber = await readNumberSelection(
+      uiMessage(ui, 'prompts', 'selectProvider', { min: 1, max: items.length, default: defaultIndex + 1 }),
+      0,
+      items.length,
+      defaultIndex + 1,
+      { onInvalid: () => renderUiError(ui, 'invalidSelection') }
+    );
+    console.log('');
+    if (selectedNumber === 0) return { back: true };
+    return { item: items[selectedNumber - 1] };
+  };
+
   let selectedCli = null;
+  let selectedProvider = null;
+  let cliStatusReported = false;
+  const reportSelectedCli = () => {
+    if (!cliStatusReported) {
+      renderUiStatus(ui, 'selectedCli', { cli: selectedCli.name });
+      cliStatusReported = true;
+    }
+  };
   if (options.cli) {
     selectedCli = config.clis.find(c => c.id === options.cli);
-    if (!selectedCli) {
-      console.error(`Error: Unknown CLI '${options.cli}'.`);
-      process.exit(1);
-    }
-    if (getCliSupportStatus(selectedCli) === 'unsupported') {
-      console.error(`Error: CLI '${options.cli}' is marked unsupported.`);
-      process.exit(1);
-    }
-  } else if (clis.length === 1) {
-    selectedCli = clis[0];
-  } else {
-    let defaultIdx = clis.findIndex(c => c.id === rememberedCliId);
-    if (defaultIdx === -1) defaultIdx = 0;
-
-    const selection = await selectMenuItem(
-      'Available CLIs:',
-      clis,
-      defaultIdx,
-      (cli) => {
-        const status = getCliSupportStatus(cli);
-        const suffix = status === 'partial' ? ' [partial]' : '';
-        return `${cli.name} (${cli.id})${suffix}`;
-      }
-    );
-    selectedCli = selection.item;
+    if (!selectedCli) throw new Error(`Unknown CLI '${options.cli}'.`);
+    if (getCliSupportStatus(selectedCli) === 'unsupported') throw new Error(`CLI '${options.cli}' is marked unsupported.`);
   }
 
-  console.log(`Selected CLI: ${selectedCli.name} (${selectedCli.id})`);
-
-  // --- 2. Provider Selection ----------------------------------------------
-  let selectedProvider = null;
-  if (options.provider === '+') {
-    selectedProvider = await invokeAddProviderFlow(selectedCli, dataDir);
-  } else if (options.provider) {
-    selectedProvider = config.providers.find(p => p.id === options.provider);
-    if (!selectedProvider) {
-      console.error(`Error: Unknown provider '${options.provider}'.`);
-      process.exit(1);
+  // Back renders the preceding CLI step below the current provider block.
+  // An explicitly supplied CLI cannot be changed, so Back repeats its compact
+  // status before allowing the provider to be selected again.
+  while (!selectedProvider) {
+    if (!selectedCli) {
+      if (clis.length === 1) {
+        selectedCli = clis[0];
+      } else {
+        const result = await selectCliInteractively();
+        if (result.exit) {
+          renderUiStatus(ui, 'exited');
+          emitShellPlan(options, { action: 'none' });
+          return 0;
+        }
+        selectedCli = result;
+      }
+      cliStatusReported = false;
     }
-  } else {
-    let defaultIdx = config.providers.findIndex(p => p.id === rememberedProviderId);
-    if (defaultIdx === -1) defaultIdx = 0;
 
-    const menuItems = options.dryRun
-      ? [...config.providers]
-      : [...config.providers, { id: '+', name: 'Add a new provider...' }];
-    const selection = await selectMenuItem(
-      'Available providers:',
-      menuItems,
-      defaultIdx,
-      (item) => item.id === '+' ? `\x1b[36m${item.name}\x1b[0m` : `${item.name} (${item.id})`
-    );
+    reportSelectedCli();
 
-    if (selection.item.id === '+') {
-      selectedProvider = await invokeAddProviderFlow(selectedCli, dataDir);
+    if (options.provider === '+') {
+      beginInteractive({ cli: selectedCli.name });
+      selectedProvider = await invokeAddProviderFlow(ui, selectedCli, dataDir);
+    } else if (options.provider) {
+      selectedProvider = config.providers.find(p => p.id === options.provider);
+      if (!selectedProvider) throw new Error(`Unknown provider '${options.provider}'.`);
     } else {
-      selectedProvider = selection.item;
+      const result = await selectProviderInteractively();
+      if (result.back) {
+        if (options.cli) {
+          renderUiStatus(ui, 'selectedCli', { cli: selectedCli.name });
+        } else {
+          selectedCli = null;
+          cliStatusReported = false;
+        }
+        continue;
+      }
+      if (result.item.id === '__exit') {
+        renderUiStatus(ui, 'exited');
+        emitShellPlan(options, { action: 'none' });
+        return 0;
+      }
+      selectedProvider = result.item.id === '+'
+        ? await invokeAddProviderFlow(ui, selectedCli, dataDir)
+        : result.item;
     }
+    renderUiStatus(ui, 'selectedProvider', { provider: selectedProvider.name });
   }
 
   // --- 3. Base URL & API Key Resolution ----------------------------------
   let baseUrl = options.baseUrl || selectedProvider.baseUrl || '';
   if (!baseUrl) {
-    baseUrl = await readInput('Base URL', selectedProvider.baseUrl || '');
+    beginInteractive({ cli: selectedCli.name, provider: selectedProvider.name });
+    baseUrl = await readInput(uiMessage(ui, 'prompts', 'baseUrl'), selectedProvider.baseUrl || '');
   }
   baseUrl = baseUrl.trim().replace(/\/+$/, '');
   if (!baseUrl) {
-    console.error('Error: No base URL could be determined.');
-    process.exit(1);
+    throwRenderedUiError(ui, 'baseUrlRequired');
   }
 
   const keyEnvName = getApiKeyEnvName(selectedProvider);
@@ -243,17 +327,16 @@ async function main() {
 
   // A dry run reports key presence but never prompts or performs network I/O.
   if (!options.dryRun && !apiKey && selectedProvider.apiKeyRequired !== false) {
-    if (process.stdin.isTTY) {
-      apiKey = await readMaskedPrompt(`API key for '${selectedProvider.name}': `);
+    if (interactive) {
+      beginInteractive({ cli: selectedCli.name, provider: selectedProvider.name });
+      apiKey = await readMaskedPrompt(`${uiMessage(ui, 'prompts', 'apiKey', { provider: selectedProvider.name })}: `);
       if (apiKey) {
         fromPrompt = true;
       } else {
-        console.error(`Error: API key is required for provider '${selectedProvider.name}'.`);
-        process.exit(1);
+        throwRenderedUiError(ui, 'apiKeyRequired', { provider: selectedProvider.name });
       }
     } else {
-      console.error(`Error: Provider '${selectedProvider.name}' requires an API key, but none was provided via --api-key or environment variable.`);
-      process.exit(1);
+      throw new NonInteractiveInputError();
     }
   }
 
@@ -388,16 +471,21 @@ async function main() {
     console.log(`Generated OpenCode config: ${openCodeConfigPath}`);
     console.log(`OpenCode runtime provider: ${openCodeOutput.runtimeProviderId} (${openCodeOutput.models.length} models)`);
   }
-  if (!options.dryRun) writeState(newState, dataDir);
+  if (!options.dryRun) {
+    writeState(newState, dataDir);
+    if (!transcriptMode && showedInteractiveScreen) {
+      beginInteractive({ cli: selectedCli.name, provider: selectedProvider.name });
+    }
+    renderUiStatus(ui, 'configurationApplied');
+  }
 
   // --- 7. Display a redacted environment plan -----------------------------
+  renderUiSummary(ui, selectedProvider.name, chosenModel, apiKey, selectedProvider.apiKeyRequired);
   if (isOpenCode) {
-    const keyStatus = apiKey
-      ? '[set]'
-      : (selectedProvider.apiKeyRequired === false ? '[not required]' : '[missing]');
+    const keyStatus = apiKey ? '[set]' : (selectedProvider.apiKeyRequired === false ? '[not required]' : '[missing]');
     console.log(`OpenCode API key: ${keyStatus}`);
   }
-  console.log(`\n\x1b[36mBYOK Environment Variables:\x1b[0m`);
+  console.log('\nBYOK Environment Variables:');
   for (const [k, v] of Object.entries(envMap)) {
     if (sensitiveKeys.has(k)) {
       const missingRequiredOpenCodeKey = isOpenCode
@@ -428,6 +516,7 @@ async function main() {
   }
 
   if (options.internalShellPlanFd !== null) {
+    renderUiStatus(ui, 'launching', { cli: selectedCli.name });
     emitShellPlan(options, {
       action: 'launch',
       command,
@@ -437,6 +526,7 @@ async function main() {
     return 0;
   }
 
+  renderUiStatus(ui, 'launching', { cli: selectedCli.name });
   const exitCode = await launchCli(command, resolvedLaunchArgs, envMap, {
     dryRun: false,
     sensitiveKeys
@@ -452,6 +542,15 @@ async function main() {
 main().then(exitCode => {
   process.exitCode = exitCode ?? 0;
 }).catch(err => {
-  console.error(`${err instanceof UsageError ? 'Usage error' : 'Manager error'}: ${err.message}`);
+  if (err instanceof InputCancelledError) {
+    if (uiForErrors) renderUiError(uiForErrors, 'cancelled');
+    else console.error('Operation cancelled.');
+  } else if (!err?.uiRendered) {
+    if (err instanceof NonInteractiveInputError) {
+      console.error('Interactive selection is unavailable: provide --cli, --provider, --base-url, and any required API key through supported non-interactive inputs.');
+    } else {
+      console.error(`${err instanceof UsageError ? 'Usage error' : 'Manager error'}: ${err.message}`);
+    }
+  }
   process.exitCode = err.exitCode || 1;
 });

@@ -269,6 +269,7 @@ describe('BYOK CLI Hub Node Manager Unit & Integration Tests', () => {
     assert.equal(parseArgs(['--internal-shell-plan-fd', '3', '--help']).internalShellPlanFd, '3');
     assert.throws(() => parseArgs(['--internal-shell-plan-fd', '1']), UsageError);
     assert.throws(() => parseArgs(['--self-check', '--provider', 'local']), UsageError);
+    assert.equal(parseArgs(['--no-clear']).noClear, true);
     assert.deepEqual(parseArgs(['--cli', 'copilot', '--', '--verbose']).passthroughArgs, ['--verbose']);
   });
 

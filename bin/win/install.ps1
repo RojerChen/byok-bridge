@@ -213,6 +213,7 @@ try {
     New-Item -ItemType Directory -Path $stagingDir | Out-Null
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'manager') -Destination $stagingDir -Recurse
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'config') -Destination $stagingDir -Recurse
+    Copy-Item -LiteralPath (Join-Path $sourceRoot 'ui') -Destination $stagingDir -Recurse
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'extension') -Destination $stagingDir -Recurse
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'run.cmd') -Destination (Join-Path $stagingDir 'run.cmd')
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'byok-cli-hub.cmd') -Destination (Join-Path $stagingDir 'byok-cli-hub.cmd')

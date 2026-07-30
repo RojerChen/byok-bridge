@@ -1,0 +1,4 @@
+Provider: OpenAI
+Model: gpt-4.1
+API key: [missing]
+[X] Invalid selection. Try again.

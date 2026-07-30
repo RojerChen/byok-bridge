@@ -155,6 +155,8 @@ bash "$REPO_ROOT/bin/linux/install.sh" \
 [[ -f "$APP_DIR/.byok-cli-hub-install.json" ]]
 node -e 'const m=require(process.argv[1]); if(m.appVersion!=="0.0.4"||m.withExtension!==true) process.exit(1)' "$APP_DIR/.byok-cli-hub-install.json"
 assert_installed_readme_documentation "$APP_DIR"
+[[ -f "$APP_DIR/ui/theme.json" ]]
+[[ -f "$APP_DIR/ui/messages/app.json" ]]
 [[ -f "$DATA_DIR/providers.json" ]]
 [[ -f "$DATA_DIR/.byok-cli-hub-data" ]]
 grep -q '^# BYOK_CLI_HUB_MANAGED_SHIM=1$' "$BIN_DIR/byok-cli-hub"

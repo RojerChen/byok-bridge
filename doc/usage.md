@@ -39,11 +39,15 @@ On Windows, the public CMD launcher applies the environment in the caller consol
 
 ## Switching models in Copilot
 
-When the optional extension is installed, use:
+`/model_byok` is a command added by BYOK CLI Hub's optional extension for GitHub Copilot CLI; it is not a built-in Copilot CLI command. With the extension installed, start GitHub Copilot CLI through BYOK CLI Hub and use:
 
 ```text
 /model_byok
 /model_byok info
 ```
+
+`/model_byok` opens a picker for the models that the Hub has preloaded for the selected provider. Model names and availability vary by provider. It changes the current Copilot session; it is not part of the Hub's initial CLI/provider selection flow.
+
+![Copilot CLI /model_byok model selection](../images/copilot-model-byok-selection.png)
 
 The extension uses `BYOK_CLI_HUB_DATA_DIR` and locked atomic state updates. If the shared JSON is damaged, it reports the error instead of overwriting the file.

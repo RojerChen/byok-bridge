@@ -98,6 +98,7 @@ LM Studio is the currently verified provider configuration. The providers below 
 - [Launch a CLI and use optional Copilot model switching](doc/usage.md)
 - [Removal and development](doc/maintenance.md)
 - [Changelog](CHANGELOG.md)
+- [License](LICENSE)
 
 ## Security by design
 

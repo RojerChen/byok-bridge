@@ -45,6 +45,25 @@ snapshot_tree() {
   ' "$1"
 }
 
+assert_installed_readme_documentation() {
+  node -e '
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const root = process.argv[1];
+    const readmePath = path.join(root, "README.md");
+    if (!fs.existsSync(readmePath)) throw new Error("Installed README is missing.");
+    const readme = fs.readFileSync(readmePath, "utf8");
+    const links = [...readme.matchAll(/\]\((doc\/[^)#]+)(?:#[^)]+)?\)/g)];
+    if (links.length === 0) throw new Error("Installed README has no relative documentation links.");
+    for (const [, relativePath] of links) {
+      if (!fs.existsSync(path.join(root, relativePath)))
+        throw new Error(`Installed README link does not resolve: ${relativePath}`);
+    }
+    if (fs.existsSync(path.join(root, "doc", "plan.md")))
+      throw new Error("Internal planning file was included in the application snapshot.");
+  ' "$1"
+}
+
 bash -n \
   "$REPO_ROOT/bin/linux/install.sh" \
   "$REPO_ROOT/bin/linux/run.sh" \
@@ -135,6 +154,7 @@ bash "$REPO_ROOT/bin/linux/install.sh" \
 
 [[ -f "$APP_DIR/.byok-cli-hub-install.json" ]]
 node -e 'const m=require(process.argv[1]); if(m.appVersion!=="0.0.4"||m.withExtension!==true) process.exit(1)' "$APP_DIR/.byok-cli-hub-install.json"
+assert_installed_readme_documentation "$APP_DIR"
 [[ -f "$DATA_DIR/providers.json" ]]
 [[ -f "$DATA_DIR/.byok-cli-hub-data" ]]
 grep -q '^# BYOK_CLI_HUB_MANAGED_SHIM=1$' "$BIN_DIR/byok-cli-hub"
@@ -238,6 +258,7 @@ bash "$REPO_ROOT/bin/linux/install.sh" \
   --install-dir "$APP_DIR" \
   --data-dir "$DATA_DIR" \
   --bin-dir "$BIN_DIR"
+assert_installed_readme_documentation "$APP_DIR"
 [[ "$CONFIG_HASH" == "$(node -e 'const fs=require("node:fs"),c=require("node:crypto");process.stdout.write(c.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' "$DATA_DIR/providers.json")" ]]
 [[ "$(grep -c '^# >>> BYOK CLI Hub managed shell integration >>>$' "$HOME/.bashrc")" -eq 1 ]]
 [[ ! -e "$BIN_DIR/byok-cli-hub-shell" ]]

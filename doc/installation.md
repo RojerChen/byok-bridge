@@ -32,6 +32,8 @@ Application: %LOCALAPPDATA%\byok-cli-hub\app\
 User data:  %USERPROFILE%\.byok-cli-hub\
 ```
 
+The application snapshot includes `README.md` and its linked guides under `doc/`, so the installed README can be read locally.
+
 The installer stages and smoke-tests a complete application snapshot before switching it into place. An existing `providers.json` is preserved. If installation fails, the previous application, extension, user `PATH`, and any data files created or replaced by that attempt are restored. The application directory is added to the user `PATH` unless `BYOK_CLI_HUB_SKIP_PATH_UPDATE=1` or `-SkipPathUpdate` is supplied.
 
 The `byok-cli-hub` CMD launcher applies every resolved `environment` entry for the selected CLI and provider to the current CMD console. These values remain available after the launched CLI exits and are inherited by the next invocation. A short-lived environment plan is created under `%TEMP%`, called by the launcher, and deleted before the CLI starts; because it can contain the API key, an interrupted launcher may require manual removal of an abandoned `byok-cli-hub-env-*.cmd` file.
@@ -112,7 +114,7 @@ Use `--check` to validate prerequisites and paths without writing files. Upgradi
 
 ## Distribution and upgrades
 
-This project continues to be distributed as source in `0.0.4`; it does not provide an MSI, DEB/RPM, global npm package, or automatic updater.
+This project is distributed as source; it does not provide an MSI, DEB/RPM, global npm package, or automatic updater.
 
 Repo mode means running `bin\win\run.cmd` or `bin/linux/run.sh` directly from a clone. Upgrade by running `git pull` or checking out a newer release tag. Repo mode does not copy an application snapshot or modify `PATH`, so it has no separate uninstall step.
 

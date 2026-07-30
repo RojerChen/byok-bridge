@@ -8,7 +8,7 @@ Both platforms use this canonical user config path:
 
 Defaults are `%USERPROFILE%\.byok-cli-hub\providers.json` on Windows and `$HOME/.byok-cli-hub/providers.json` on Linux/WSL. A legacy Windows `config/providers.json` is migrated to the canonical location and preserved.
 
-The installed example contains the full schema. A provider entry resembles:
+[`config/providers.example.json`](../config/providers.example.json) is the canonical, complete starting configuration installed for users. The shortened JSON below illustrates the relevant structure; use the example file for the complete current schema and defaults.
 
 ```json
 {

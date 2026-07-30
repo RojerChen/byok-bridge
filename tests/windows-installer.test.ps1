@@ -13,6 +13,19 @@ function Assert-True([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw $Message }
 }
 
+function Assert-InstalledReadmeDocumentation([string]$ApplicationDir) {
+    $readmePath = Join-Path $ApplicationDir 'README.md'
+    Assert-True (Test-Path -LiteralPath $readmePath) 'Installed README is missing.'
+    $readme = Get-Content -Raw -LiteralPath $readmePath -Encoding UTF8
+    $documentationLinks = [regex]::Matches($readme, '\]\((doc/[^)#]+)(?:#[^)]+)?\)')
+    Assert-True ($documentationLinks.Count -gt 0) 'Installed README has no relative documentation links.'
+    foreach ($link in $documentationLinks) {
+        $relativePath = $link.Groups[1].Value.Replace('/', '\')
+        Assert-True (Test-Path -LiteralPath (Join-Path $ApplicationDir $relativePath)) "Installed README link does not resolve: $($link.Groups[1].Value)"
+    }
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $ApplicationDir 'doc\plan.md'))) 'Internal planning file was included in the application snapshot.'
+}
+
 function Set-TestEnvironment([string]$CaseRoot) {
     $script:appRoot = Join-Path $CaseRoot 'app-root'
     $script:dataRoot = Join-Path $CaseRoot 'data'
@@ -83,9 +96,11 @@ try {
 
     Set-TestEnvironment (Join-Path $testRoot 'fresh')
     & $installer -WithExtension
-    & $installer
-
     $appDir = Join-Path $appRoot 'app'
+    Assert-InstalledReadmeDocumentation $appDir
+    & $installer
+    Assert-InstalledReadmeDocumentation $appDir
+
     $extensionDir = Join-Path $copilotHome 'extensions\byok-cli-hub-copilot'
     $manifestPath = Join-Path $appDir '.byok-cli-hub-install.json'
     Assert-True (Test-Path -LiteralPath $manifestPath) 'Manifest missing.'
@@ -174,6 +189,7 @@ try {
     $legacyCache = [IO.File]::ReadAllBytes((Join-Path $dataRoot 'models-cache.json'))
     & $installer
     $appDir = Join-Path $appRoot 'app'
+    Assert-InstalledReadmeDocumentation $appDir
     $extensionDir = Join-Path $copilotHome 'extensions\byok-cli-hub-copilot'
     $manifest = Get-Content -Raw -LiteralPath (Join-Path $appDir '.byok-cli-hub-install.json') -Encoding UTF8 | ConvertFrom-Json
     Assert-True ($manifest.appVersion -eq '0.0.4' -and $manifest.migratedFrom -eq '0.0.1') 'Legacy migration metadata is incorrect.'

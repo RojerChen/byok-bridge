@@ -408,6 +408,11 @@ cp -R "$REPO_ROOT/config" "$STAGING_DIR/"
 cp -R "$REPO_ROOT/bin" "$STAGING_DIR/"
 cp -R "$REPO_ROOT/shell" "$STAGING_DIR/"
 cp -R "$REPO_ROOT/libexec" "$STAGING_DIR/"
+cp "$REPO_ROOT/README.md" "$STAGING_DIR/README.md"
+mkdir -p "$STAGING_DIR/doc"
+for documentation_name in installation.md provider-configuration.md usage.md maintenance.md; do
+  cp "$REPO_ROOT/doc/$documentation_name" "$STAGING_DIR/doc/$documentation_name"
+done
 [[ ! -d "$REPO_ROOT/extension" ]] || cp -R "$REPO_ROOT/extension" "$STAGING_DIR/"
 find "$STAGING_DIR" -type d -exec chmod 755 {} +
 find "$STAGING_DIR" -type f -exec chmod 644 {} +

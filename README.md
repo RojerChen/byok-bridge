@@ -50,7 +50,7 @@ BYOK CLI Hub provides one consistent workflow across supported AI coding CLIs.
 - [Install and upgrade](doc/installation.md)
 - [Configure providers](doc/provider-configuration.md)
 - [Launch a CLI and switch models](doc/usage.md)
-- [Remove or contribute](doc/maintenance.md)
+- [Removal and development](doc/maintenance.md)
 
 ## Security by design
 

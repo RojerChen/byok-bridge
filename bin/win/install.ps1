@@ -219,6 +219,11 @@ try {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'uninstall.cmd') -Destination (Join-Path $stagingDir 'uninstall.cmd')
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'uninstall.ps1') -Destination (Join-Path $stagingDir 'uninstall.ps1')
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'README.md') -Destination (Join-Path $stagingDir 'README.md')
+    $documentationDir = Join-Path $stagingDir 'doc'
+    New-Item -ItemType Directory -Path $documentationDir | Out-Null
+    foreach ($documentationName in @('installation.md', 'provider-configuration.md', 'usage.md', 'maintenance.md')) {
+        Copy-Item -LiteralPath (Join-Path $sourceRoot (Join-Path 'doc' $documentationName)) -Destination (Join-Path $documentationDir $documentationName)
+    }
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'package.json') -Destination (Join-Path $stagingDir 'package.json')
 
     $manifest = [ordered]@{

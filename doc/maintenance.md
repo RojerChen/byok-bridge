@@ -43,6 +43,7 @@ npm run test:node
 # Granular Windows suites:
 npm run smoke
 npm run test:powershell-http
+npm run test:windows-shell
 npm run test:windows-installer
 npm run test:all:windows
 

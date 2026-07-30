@@ -61,6 +61,25 @@ assert_installed_readme_documentation() {
       if (!fs.existsSync(path.join(root, relativePath)))
         throw new Error(`Installed README link does not resolve: ${relativePath}`);
     }
+    const documentationDir = path.join(root, "doc");
+    if (!fs.existsSync(documentationDir))
+      throw new Error("Installed documentation directory is missing.");
+    const markdownPaths = [
+      readmePath,
+      ...fs.readdirSync(documentationDir)
+        .filter((name) => name.endsWith(".md"))
+        .map((name) => path.join(documentationDir, name))
+    ];
+    for (const markdownPath of markdownPaths) {
+      const markdown = fs.readFileSync(markdownPath, "utf8");
+      for (const match of markdown.matchAll(/!?\[[^\]]*\]\(([^)\s]+)/g)) {
+        const target = match[1].split("#", 1)[0];
+        if (!target || /^[a-z][a-z0-9+.-]*:/i.test(target)) continue;
+        const resolvedPath = path.resolve(path.dirname(markdownPath), target);
+        if (!fs.existsSync(resolvedPath))
+          throw new Error(`Installed Markdown link does not resolve: ${target} (from ${markdownPath})`);
+      }
+    }
     if (fs.existsSync(path.join(root, "doc", "plan.md")))
       throw new Error("Internal planning file was included in the application snapshot.");
   ' "$1"

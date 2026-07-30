@@ -222,9 +222,11 @@ try {
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'README.md') -Destination (Join-Path $stagingDir 'README.md')
     $documentationDir = Join-Path $stagingDir 'doc'
     New-Item -ItemType Directory -Path $documentationDir | Out-Null
-    foreach ($documentationName in @('installation.md', 'provider-configuration.md', 'usage.md', 'maintenance.md')) {
+    foreach ($documentationName in @('quick-start.md', 'installation.md', 'provider-configuration.md', 'usage.md', 'maintenance.md')) {
         Copy-Item -LiteralPath (Join-Path $sourceRoot (Join-Path 'doc' $documentationName)) -Destination (Join-Path $documentationDir $documentationName)
     }
+    Copy-Item -LiteralPath (Join-Path $sourceRoot 'images') -Destination $stagingDir -Recurse
+    Copy-Item -LiteralPath (Join-Path $sourceRoot 'CHANGELOG.md') -Destination (Join-Path $stagingDir 'CHANGELOG.md')
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'package.json') -Destination (Join-Path $stagingDir 'package.json')
 
     $manifest = [ordered]@{

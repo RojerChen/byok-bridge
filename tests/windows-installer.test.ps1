@@ -25,6 +25,18 @@ function Assert-InstalledReadmeDocumentation([string]$ApplicationDir) {
         $relativePath = $link.Groups[1].Value.Replace('/', '\')
         Assert-True (Test-Path -LiteralPath (Join-Path $ApplicationDir $relativePath)) "Installed README link does not resolve: $($link.Groups[1].Value)"
     }
+    $documentationDir = Join-Path $ApplicationDir 'doc'
+    Assert-True (Test-Path -LiteralPath $documentationDir) 'Installed documentation directory is missing.'
+    $markdownPaths = @($readmePath) + @(Get-ChildItem -LiteralPath $documentationDir -Filter '*.md' -File | Select-Object -ExpandProperty FullName)
+    foreach ($markdownPath in $markdownPaths) {
+        $markdown = Get-Content -Raw -LiteralPath $markdownPath -Encoding UTF8
+        foreach ($link in [regex]::Matches($markdown, '!?(?:\[[^\]]*\])\((?<target>[^)\s]+)')) {
+            $target = ($link.Groups['target'].Value -split '#', 2)[0]
+            if ([string]::IsNullOrWhiteSpace($target) -or $target -match '^[a-z][a-z0-9+.-]*:') { continue }
+            $resolvedPath = Join-Path (Split-Path -Parent $markdownPath) $target.Replace('/', '\')
+            Assert-True (Test-Path -LiteralPath $resolvedPath) "Installed Markdown link does not resolve: $target (from $markdownPath)"
+        }
+    }
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $ApplicationDir 'doc\plan.md'))) 'Internal planning file was included in the application snapshot.'
     Assert-True (Test-Path -LiteralPath (Join-Path $ApplicationDir 'ui\theme.json')) 'Installed UI theme is missing.'
     Assert-True (Test-Path -LiteralPath (Join-Path $ApplicationDir 'ui\messages\app.json')) 'Installed UI messages are missing.'

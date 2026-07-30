@@ -4,6 +4,8 @@ param()
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$expectedAppVersion = "$(Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'package.json') -Encoding UTF8 | ConvertFrom-Json | Select-Object -ExpandProperty version)"
+$newerAppVersion = "$(([version]$expectedAppVersion).Major + 1).0.0"
 $testRoot = [IO.Path]::GetFullPath((Join-Path $env:TEMP ('byok-win-installer-' + [Guid]::NewGuid().ToString('N'))))
 $tempRoot = [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\') + '\'
 if (-not $testRoot.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe test root.' }
@@ -107,7 +109,7 @@ try {
     $manifestPath = Join-Path $appDir '.byok-cli-hub-install.json'
     Assert-True (Test-Path -LiteralPath $manifestPath) 'Manifest missing.'
     $manifest = Get-Content -Raw -LiteralPath $manifestPath -Encoding UTF8 | ConvertFrom-Json
-    Assert-True ($manifest.appVersion -eq '0.0.4') 'Manifest appVersion mismatch.'
+    Assert-True ($manifest.appVersion -eq $expectedAppVersion) 'Manifest appVersion mismatch.'
     Assert-True ($manifest.withExtension -eq $true) 'Managed update did not preserve extension choice.'
     Assert-True (-not $manifest.migratedFrom) 'Fresh install must not report migratedFrom.'
     Assert-True (Test-Path -LiteralPath (Join-Path $dataRoot 'providers.json')) 'Canonical config missing.'
@@ -124,7 +126,7 @@ try {
 
     $manifestBytes = [IO.File]::ReadAllBytes($manifestPath)
     $newerManifest = $manifest
-    $newerManifest.appVersion = '0.0.5'
+    $newerManifest.appVersion = $newerAppVersion
     [IO.File]::WriteAllText($manifestPath, (($newerManifest | ConvertTo-Json -Depth 10) + "`n"), (New-Object Text.UTF8Encoding $false))
     $failed = $false
     try { & $installer } catch { $failed = $true }
@@ -194,7 +196,7 @@ try {
     Assert-InstalledReadmeDocumentation $appDir
     $extensionDir = Join-Path $copilotHome 'extensions\byok-cli-hub-copilot'
     $manifest = Get-Content -Raw -LiteralPath (Join-Path $appDir '.byok-cli-hub-install.json') -Encoding UTF8 | ConvertFrom-Json
-    Assert-True ($manifest.appVersion -eq '0.0.4' -and $manifest.migratedFrom -eq '0.0.1') 'Legacy migration metadata is incorrect.'
+    Assert-True ($manifest.appVersion -eq $expectedAppVersion -and $manifest.migratedFrom -eq '0.0.1') 'Legacy migration metadata is incorrect.'
     Assert-True ($manifest.withExtension -eq $true) 'Legacy extension choice was not preserved.'
     Assert-True (Test-Path -LiteralPath (Join-Path $dataRoot 'providers.json')) 'Legacy config was not migrated.'
     Assert-True (Test-Path -LiteralPath (Join-Path $dataRoot 'config\providers.json')) 'Legacy config backup was not preserved.'

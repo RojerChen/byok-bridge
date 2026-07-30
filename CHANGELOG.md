@@ -4,12 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is intentionally simple and follows a lightweight `Keep a Changelog` style.
 
-## [0.0.4] - 2026-07-29
+## [0.1.0] - 2026-07-30
 
 ### Added
 
 - OpenCode CLI support on Windows and Linux/WSL through the `opencode-config-v1` adapter.
 - Atomic generation of `<data-dir>/opencode.json`, with deterministic runtime provider IDs, exact case-sensitive model maps, explicit model-selection provenance, and `OPENCODE_CONFIG` launch wiring.
+- Cross-platform interactive wizard for selecting an AI coding CLI and BYOK provider, with shared theme and message resources for the Node.js and PowerShell implementations.
+- `--no-clear` (Linux/WSL) and `-NoClear` (Windows) options, plus `BYOK_UI_HISTORY=true`, for retaining prior wizard screens.
 - Node, PowerShell 5.1, dry-run, preflight-preservation, environment-scope, special-model-ID, and plaintext-secret regression coverage.
 
 ### Changed
@@ -18,6 +20,7 @@ The format is intentionally simple and follows a lightweight `Keep a Changelog` 
 - OpenCode templates now use `{api_key_ref}`, rendered as `{env:BYOK_CLI_HUB_OPENCODE_API_KEY}`; the ambiguous `{api_key_env}` name is no longer accepted. The `{api_key}` placeholder remains reserved for assigning the plaintext key to runtime environment entries.
 - Configured environment entries use the same semantics for every CLI: the selected CLI environment, provider-wide environment, selected provider CLI override, and configured API-key/model targets are all applied without filtering variable names.
 - Runtime JSON writes reparse the flushed temporary file before atomic replacement. OpenCode generation is limited to 32 levels, 4096 unique models, and 8 MiB of UTF-8 JSON.
+- Interactive startup now uses a clean two-step terminal UI; `NO_COLOR` and `BYOK_UI_COLOR=0` force plain-text output.
 
 ### Fixed
 

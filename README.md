@@ -10,6 +10,18 @@ BYOK CLI Hub provides one consistent path from provider to prompt:
 
 **Provider → Model discovery → Model selection → CLI configuration → Launch**
 
+## Interactive workflow
+
+Select the AI coding CLI first, then choose a configured BYOK provider.
+
+### 1. Select an AI coding CLI
+
+![Select an AI coding CLI](images/cli-selection.png)
+
+### 2. Select a BYOK provider
+
+![Select a BYOK provider](images/provider-selection.png)
+
 ## Why BYOK CLI Hub?
 
 Using multiple AI coding CLIs often means repeatedly editing environment variables, configuration files, and model names.

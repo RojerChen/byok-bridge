@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+APP_VERSION="$(node -e 'const p=require(process.argv[1]); process.stdout.write(p.version)' "$REPO_ROOT/package.json")"
+NEWER_APP_VERSION="$(node -e 'const [major]=require(process.argv[1]).version.split("."); process.stdout.write(`${Number(major)+1}.0.0`)' "$REPO_ROOT/package.json")"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/byok-linux-installer.XXXXXX")"
 
 cleanup() {
@@ -153,7 +155,7 @@ bash "$REPO_ROOT/bin/linux/install.sh" \
   --with-extension
 
 [[ -f "$APP_DIR/.byok-cli-hub-install.json" ]]
-node -e 'const m=require(process.argv[1]); if(m.appVersion!=="0.0.4"||m.withExtension!==true) process.exit(1)' "$APP_DIR/.byok-cli-hub-install.json"
+node -e 'const m=require(process.argv[1]); if(m.appVersion!==process.argv[2]||m.withExtension!==true) process.exit(1)' "$APP_DIR/.byok-cli-hub-install.json" "$APP_VERSION"
 assert_installed_readme_documentation "$APP_DIR"
 [[ -f "$APP_DIR/ui/theme.json" ]]
 [[ -f "$APP_DIR/ui/messages/app.json" ]]
@@ -181,7 +183,7 @@ fi
 
 # A manifest from a newer application version must not be downgraded.
 cp "$APP_DIR/.byok-cli-hub-install.json" "$TEST_ROOT/manifest-backup.json"
-node -e 'const fs=require("node:fs"),p=process.argv[1],m=JSON.parse(fs.readFileSync(p,"utf8"));m.appVersion="0.0.5";fs.writeFileSync(p,JSON.stringify(m,null,2)+"\n")' "$APP_DIR/.byok-cli-hub-install.json"
+node -e 'const fs=require("node:fs"),p=process.argv[1],m=JSON.parse(fs.readFileSync(p,"utf8"));m.appVersion=process.argv[2];fs.writeFileSync(p,JSON.stringify(m,null,2)+"\n")' "$APP_DIR/.byok-cli-hub-install.json" "$NEWER_APP_VERSION"
 if bash "$REPO_ROOT/bin/linux/install.sh" \
   --install-dir "$APP_DIR" \
   --data-dir "$DATA_DIR" \

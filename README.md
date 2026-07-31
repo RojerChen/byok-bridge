@@ -1,6 +1,6 @@
-# BYOK CLI Hub
+# BYOK Bridge
 
-One workflow for every supported AI coding CLI.
+A local bridge between AI coding CLIs and OpenAI-compatible providers.
 
 Stop editing environment variables, configuration files, and model settings every time you switch AI coding CLIs.
 
@@ -8,7 +8,7 @@ Stop editing environment variables, configuration files, and model settings ever
 
 The Hub automatically discovers available models and prepares the correct CLI configuration before launch.
 
-![BYOK CLI Hub workflow: select a CLI, select a provider, and start coding](images/hero-workflow.png)
+![BYOK Bridge workflow: select a CLI, select a provider, and start coding](images/hero-workflow.png)
 
 ## Feature Summary
 
@@ -18,17 +18,17 @@ The Hub automatically discovers available models and prepares the correct CLI co
 | Automatic model discovery & caching | Retrieve and cache models from the provider API, reuse the previous model when available, and otherwise use the first discovered model. |
 | CLI-specific setup | Apply the selected provider's runtime environment and generate the required CLI configuration. |
 | API-key safety | Read keys from the environment or prompt; never store them in `providers.json` or generated OpenCode configuration. |
-| Copilot model switching | Add optional `/model_byok` switching through the BYOK CLI Hub Copilot extension. |
+| Copilot model switching | Add optional `/model_byok` switching through the BYOK Bridge Copilot extension. |
 
-## Why BYOK CLI Hub?
+## Why BYOK Bridge?
 
 Every AI coding CLI expects its own environment variables, model names, and configuration format.
 
-BYOK CLI Hub removes that friction by providing one provider workflow across supported CLIs.
+BYOK Bridge removes that friction by providing one provider workflow across supported CLIs.
 
-### BYOK CLI Hub extension for Copilot model switching
+### BYOK Bridge extension for Copilot model switching
 
-BYOK CLI Hub includes an optional extension developed specifically for GitHub Copilot CLI. With the extension installed, start Copilot through the Hub, then run `/model_byok` to switch among the models preloaded for the selected provider. `/model_byok` is not a built-in Copilot CLI command. Model names and availability vary by provider.
+BYOK Bridge includes an optional extension developed specifically for GitHub Copilot CLI. With the extension installed, start Copilot through the Hub, then run `/model_byok` to switch among the models preloaded for the selected provider. `/model_byok` is not a built-in Copilot CLI command. Model names and availability vary by provider.
 
 ![Copilot CLI /model_byok model selection](images/copilot-model-byok-selection.png)
 
@@ -56,7 +56,7 @@ Before installing, make sure at least one supported CLI (`copilot` or `opencode`
 3. Launch the Hub:
 
    ```text
-   byok-cli-hub
+   byok
    ```
 
 For the complete first-run walkthrough, see the [Quick Start guide](doc/quick-start.md).
@@ -78,7 +78,7 @@ Tested environments: Windows, WSL2 (Ubuntu), and Ubuntu Linux.
 
 ## Supported Providers
 
-BYOK CLI Hub uses a generic OpenAI-compatible provider configuration rather than vendor-specific adapters. It is designed for providers that expose a model-list API: by default `GET /models` with model IDs at `data[].id`. `modelsApi.path`, `itemsPath`, and `idPath` can be configured when an endpoint differs.
+BYOK Bridge uses a generic OpenAI-compatible provider configuration rather than vendor-specific adapters. It is designed for providers that expose a model-list API: by default `GET /models` with model IDs at `data[].id`. `modelsApi.path`, `itemsPath`, and `idPath` can be configured when an endpoint differs.
 
 LM Studio is the currently verified provider configuration. The providers below are common OpenAI-compatible targets; test each endpoint and model with your selected coding CLI before relying on it in a workflow.
 

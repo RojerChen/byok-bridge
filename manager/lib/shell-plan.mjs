@@ -48,7 +48,7 @@ function encodeHex(value, label) {
 
 export function validateShellEnvironmentName(name) {
   if (!ENV_NAME_PATTERN.test(name)) fail(`Shell environment name '${name}' is invalid.`);
-  if (RESERVED_ENVIRONMENT_NAMES.has(name) || name.startsWith('_BYOK_CLI_HUB_')) {
+  if (RESERVED_ENVIRONMENT_NAMES.has(name) || name.startsWith('_BYOK_BRIDGE_')) {
     fail(`Shell environment name '${name}' is reserved and cannot be applied to the caller shell.`);
   }
   return name;
@@ -59,7 +59,7 @@ export function encodeShellPlan(plan) {
     fail("Shell plan action must be 'launch' or 'none'.");
   }
 
-  const lines = ['BYOK_CLI_HUB_SHELL_PLAN\t1', `ACTION\t${plan.action}`];
+  const lines = ['BYOK_BRIDGE_SHELL_PLAN\t1', `ACTION\t${plan.action}`];
   let recordCount = 1;
 
   if (plan.action === 'none') {

@@ -1,32 +1,32 @@
-# Using BYOK CLI Hub
+# Using BYOK Bridge
 
 ## Launching
 
 After installation:
 
 ```text
-byok-cli-hub
+byok
 ```
 
 Windows options use PowerShell syntax:
 
 ```bat
-byok-cli-hub -Cli copilot -Provider my-provider -Model my-model
-byok-cli-hub -Cli opencode -Provider my-provider -Model my-model
-byok-cli-hub -Provider my-provider -DryRun
-byok-cli-hub -Provider my-provider -Refresh
-byok-cli-hub -NoClear
+byok -Cli copilot -Provider my-provider -Model my-model
+byok -Cli opencode -Provider my-provider -Model my-model
+byok -Provider my-provider -DryRun
+byok -Provider my-provider -Refresh
+byok -NoClear
 ```
 
 Linux / WSL options use GNU-style long names:
 
 ```bash
-byok-cli-hub --cli copilot --provider my-provider --model my-model
-byok-cli-hub --cli opencode --provider my-provider --model my-model
-byok-cli-hub --provider my-provider --dry-run
-byok-cli-hub --provider my-provider --refresh
-byok-cli-hub --no-clear
-byok-cli-hub --provider my-provider -- --additional-cli-argument
+byok --cli copilot --provider my-provider --model my-model
+byok --cli opencode --provider my-provider --model my-model
+byok --provider my-provider --dry-run
+byok --provider my-provider --refresh
+byok --no-clear
+byok --provider my-provider -- --additional-cli-argument
 ```
 
 `--dry-run` / `-DryRun` does not fetch models, update cache/state, apply a caller environment, or launch a child. It prints a redacted execution plan. Refresh updates cache/state and returns without launching the CLI.
@@ -39,7 +39,7 @@ On Windows, the public CMD launcher applies the environment in the caller consol
 
 ## Switching models in Copilot
 
-`/model_byok` is a command added by BYOK CLI Hub's optional extension for GitHub Copilot CLI; it is not a built-in Copilot CLI command. With the extension installed, start GitHub Copilot CLI through BYOK CLI Hub and use:
+`/model_byok` is a command added by BYOK Bridge's optional extension for GitHub Copilot CLI; it is not a built-in Copilot CLI command. With the extension installed, start GitHub Copilot CLI through BYOK Bridge and use:
 
 ```text
 /model_byok
@@ -50,4 +50,4 @@ On Windows, the public CMD launcher applies the environment in the caller consol
 
 ![Copilot CLI /model_byok model selection](../images/copilot-model-byok-selection.png)
 
-The extension uses `BYOK_CLI_HUB_DATA_DIR` and locked atomic state updates. If the shared JSON is damaged, it reports the error instead of overwriting the file.
+The extension uses `BYOK_BRIDGE_DATA_DIR` and locked atomic state updates. If the shared JSON is damaged, it reports the error instead of overwriting the file.

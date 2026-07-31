@@ -16,7 +16,7 @@ die() { echo "Error: $*" >&2; exit 1; }
 
 print_help() {
   cat << 'EOF'
-BYOK CLI Hub Uninstaller (Linux / WSL2)
+BYOK Bridge Uninstaller (Linux / WSL2)
 
 Usage:
   uninstall.sh [options]
@@ -96,9 +96,9 @@ assert_bashrc_target() {
 }
 
 XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
-TARGET_INSTALL_DIR="$(canonicalize_absolute 'install-dir' "${INSTALL_DIR:-$XDG_DATA_HOME/byok-cli-hub}")"
+TARGET_INSTALL_DIR="$(canonicalize_absolute 'install-dir' "${INSTALL_DIR:-$XDG_DATA_HOME/byok-bridge}")"
 assert_safe_target 'install-dir' "$TARGET_INSTALL_DIR"
-MANIFEST_PATH="$TARGET_INSTALL_DIR/.byok-cli-hub-install.json"
+MANIFEST_PATH="$TARGET_INSTALL_DIR/.byok-bridge-install.json"
 
 manifest_value() {
   node -e '
@@ -110,7 +110,7 @@ manifest_value() {
 }
 
 if [[ -f "$MANIFEST_PATH" ]]; then
-  [[ "$(manifest_value product)" == "byok-cli-hub" ]] || die "Install manifest product marker is invalid."
+  [[ "$(manifest_value product)" == "byok-bridge" ]] || die "Install manifest product marker is invalid."
   [[ "$(manifest_value schemaVersion)" == "1" ]] || die "Install manifest schema version is invalid."
   APP_VERSION_VALUE="$(manifest_value appVersion)"
   [[ "$APP_VERSION_VALUE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "Install manifest application version is invalid."
@@ -139,10 +139,10 @@ if [[ -f "$MANIFEST_PATH" ]]; then
 else
   [[ "$FORCE_LEGACY" -eq 1 && -f "$TARGET_INSTALL_DIR/manager/manager.mjs" ]] \
     || die "No valid ownership manifest found. Refusing to remove '$TARGET_INSTALL_DIR'."
-  TARGET_DATA_DIR="$(canonicalize_absolute 'data-dir' "${DATA_DIR:-$HOME/.byok-cli-hub}")"
+  TARGET_DATA_DIR="$(canonicalize_absolute 'data-dir' "${DATA_DIR:-$HOME/.byok-bridge}")"
   TARGET_BIN_DIR="$(canonicalize_absolute 'bin-dir' "${BIN_DIR:-$HOME/.local/bin}")"
   COPILOT_HOME_CANON="$(canonicalize_absolute 'COPILOT_HOME' "${COPILOT_HOME:-$HOME/.copilot}")"
-  TARGET_EXT_DIR="$COPILOT_HOME_CANON/extensions/byok-cli-hub-copilot"
+  TARGET_EXT_DIR="$COPILOT_HOME_CANON/extensions/byok-bridge-copilot"
   WITH_EXTENSION=1
   LEGACY_SHELL_HELPER_OWNED=1
 fi
@@ -156,10 +156,10 @@ assert_not_overlapping 'data-dir' "$TARGET_DATA_DIR" 'bin-dir' "$TARGET_BIN_DIR"
 assert_not_overlapping 'install-dir' "$TARGET_INSTALL_DIR" 'extension-dir' "$TARGET_EXT_DIR"
 assert_not_overlapping 'data-dir' "$TARGET_DATA_DIR" 'extension-dir' "$TARGET_EXT_DIR"
 assert_not_overlapping 'bin-dir' "$TARGET_BIN_DIR" 'extension-dir' "$TARGET_EXT_DIR"
-SHIM_PATH="$TARGET_BIN_DIR/byok-cli-hub"
+SHIM_PATH="$TARGET_BIN_DIR/byok"
 LEGACY_SHELL_HELPER_PATH="$TARGET_BIN_DIR/byok-cli-hub-shell"
 
-echo "=== BYOK CLI Hub Uninstaller ==="
+echo "=== BYOK Bridge Uninstaller ==="
 echo "Resolved install dir: $TARGET_INSTALL_DIR"
 echo "Resolved data dir:    $TARGET_DATA_DIR"
 echo "Resolved shim:        $SHIM_PATH"
@@ -169,7 +169,7 @@ echo "Resolved shim:        $SHIM_PATH"
 if [[ "$SHELL_STARTUP_MANAGED" -eq 1 ]]; then
   SHELL_INTEGRATION_REMOVED=1
   if [[ -f "$BASH_RC_TARGET" ]]; then
-    BASH_RC_TEMP="$(mktemp "$(dirname "$BASH_RC_TARGET")/.byok-cli-hub.bashrc-remove.XXXXXX")"
+    BASH_RC_TEMP="$(mktemp "$(dirname "$BASH_RC_TARGET")/.byok-bridge.bashrc-remove.XXXXXX")"
     BASH_RC_RESULT="$(node "$REPO_ROOT/libexec/linux/bash-profile-manager.mjs" remove "$BASH_RC_TARGET" "$BASH_RC_TEMP")" \
       || { rm -f -- "$BASH_RC_TEMP"; die "Could not safely remove the managed Bash startup block."; }
     read -r BASH_RC_CHANGED BASH_RC_REMOVE_FILE <<< "$BASH_RC_RESULT"
@@ -191,7 +191,7 @@ if [[ "$SHELL_STARTUP_MANAGED" -eq 1 ]]; then
 fi
 
 if [[ -f "$SHIM_PATH" ]]; then
-  if grep -q '^# BYOK_CLI_HUB_MANAGED_SHIM=1$' "$SHIM_PATH" 2>/dev/null || [[ "$FORCE_LEGACY" -eq 1 ]]; then
+  if grep -q '^# BYOK_BRIDGE_MANAGED_SHIM=1$' "$SHIM_PATH" 2>/dev/null || [[ "$FORCE_LEGACY" -eq 1 ]]; then
     rm -f -- "$SHIM_PATH"
     echo "[OK] Removed managed shim."
   else
@@ -210,7 +210,7 @@ if [[ "$LEGACY_SHELL_HELPER_OWNED" -eq 1 && -f "$LEGACY_SHELL_HELPER_PATH" ]]; t
 fi
 
 if [[ "$WITH_EXTENSION" -eq 1 && -d "$TARGET_EXT_DIR" ]]; then
-  if [[ -f "$TARGET_EXT_DIR/.byok-cli-hub-managed" ]] || [[ "$FORCE_LEGACY" -eq 1 ]]; then
+  if [[ -f "$TARGET_EXT_DIR/.byok-bridge-managed" ]] || [[ "$FORCE_LEGACY" -eq 1 ]]; then
     rm -rf -- "$TARGET_EXT_DIR"
     echo "[OK] Removed managed extension."
   else
@@ -222,7 +222,7 @@ rm -rf -- "$TARGET_INSTALL_DIR"
 echo "[OK] Removed managed application snapshot."
 
 if [[ "$PURGE_DATA" -eq 1 && -d "$TARGET_DATA_DIR" ]]; then
-  if [[ ! -f "$TARGET_DATA_DIR/.byok-cli-hub-data" && "$FORCE_LEGACY" -ne 1 ]]; then
+  if [[ ! -f "$TARGET_DATA_DIR/.byok-bridge-data" && "$FORCE_LEGACY" -ne 1 ]]; then
     die "Data directory has no ownership marker; refusing purge. Use --force-legacy only after verifying the path."
   fi
   confirmed=0
@@ -244,7 +244,7 @@ else
   echo "[INFO] User data preserved at $TARGET_DATA_DIR"
 fi
 
-echo "BYOK CLI Hub uninstalled successfully."
+echo "BYOK Bridge uninstalled successfully."
 if [[ "$SHELL_INTEGRATION_REMOVED" -eq 1 ]]; then
-  echo "[NOTICE] If shell integration is active in this terminal, run byok-cli-hub-shell-unload or close the terminal."
+  echo "[NOTICE] If shell integration is active in this terminal, run byok-shell-unload or close the terminal."
 fi

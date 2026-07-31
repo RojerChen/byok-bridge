@@ -1,9 +1,9 @@
 {
-  "name": "byok-cli-hub",
+  "name": "byok-bridge",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Configuration-driven BYOK launcher and hub for multiple AI CLIs",
+  "description": "A local bridge between AI coding CLIs and OpenAI-compatible providers.",
   "scripts": {
     "test": "node tests/run-all-tests.mjs",
     "test:node": "node --test manager/*.test.mjs tests/*.test.mjs",

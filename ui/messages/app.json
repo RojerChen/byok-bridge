@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "name": "BYOK CLI Hub",
+  "name": "BYOK Bridge",
   "description": "BYOK Manager for AI Coding CLIs",
   "steps": {
     "selectCli": "Select AI Coding CLI",

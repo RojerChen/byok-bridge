@@ -49,11 +49,11 @@ function Set-TestEnvironment([string]$CaseRoot) {
     $script:pathFile = Join-Path $CaseRoot 'user-path.txt'
     New-Item -ItemType Directory -Force -Path $CaseRoot | Out-Null
     [IO.File]::WriteAllText($script:pathFile, 'C:\ExistingTool', (New-Object Text.UTF8Encoding $false))
-    $env:BYOK_CLI_HUB_INSTALL_ROOT = $script:appRoot
-    $env:BYOK_CLI_HUB_DATA_DIR = $script:dataRoot
+    $env:BYOK_BRIDGE_INSTALL_ROOT = $script:appRoot
+    $env:BYOK_BRIDGE_DATA_DIR = $script:dataRoot
     $env:COPILOT_HOME = $script:copilotHome
-    $env:BYOK_CLI_HUB_TEST_USER_PATH_FILE = $script:pathFile
-    Remove-Item Env:\BYOK_CLI_HUB_TEST_FAIL_AT -ErrorAction SilentlyContinue
+    $env:BYOK_BRIDGE_TEST_USER_PATH_FILE = $script:pathFile
+    Remove-Item Env:\BYOK_BRIDGE_TEST_FAIL_AT -ErrorAction SilentlyContinue
 }
 
 function Get-TestPathEntries {
@@ -63,7 +63,7 @@ function Get-TestPathEntries {
 function New-Legacy001Fixture([string]$CaseRoot, [switch]$InvalidConfig, [switch]$MalformedConfig) {
     Set-TestEnvironment $CaseRoot
     New-Item -ItemType Directory -Force -Path (Join-Path $script:dataRoot 'manager'), (Join-Path $script:dataRoot 'config') | Out-Null
-    Copy-Item -LiteralPath (Join-Path $repoRoot 'manager\start-byok-cli-hub.ps1') -Destination (Join-Path $script:dataRoot 'manager\start-byok-cli-hub.ps1')
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'manager\start-byok-bridge.ps1') -Destination (Join-Path $script:dataRoot 'manager\start-byok-cli-hub.ps1')
     Copy-Item -LiteralPath (Join-Path $repoRoot 'manager\ByokManager.psm1') -Destination (Join-Path $script:dataRoot 'manager\ByokManager.psm1')
     Set-Content -LiteralPath (Join-Path $script:dataRoot 'run.cmd') -Value '@echo legacy-run' -Encoding ASCII
     Set-Content -LiteralPath (Join-Path $script:dataRoot 'byok-cli-hub.cmd') -Value '@echo legacy-launcher' -Encoding ASCII
@@ -80,17 +80,17 @@ function New-Legacy001Fixture([string]$CaseRoot, [switch]$InvalidConfig, [switch
     [IO.File]::WriteAllText((Join-Path $script:dataRoot 'state.json'), '{"providerId":"legacy","model":"legacy-model"}', (New-Object Text.UTF8Encoding $false))
     [IO.File]::WriteAllText((Join-Path $script:dataRoot 'models-cache.json'), '{"version":1,"caches":{}}', (New-Object Text.UTF8Encoding $false))
     New-Item -ItemType Directory -Force -Path (Join-Path $script:copilotHome 'extensions') | Out-Null
-    Copy-Item -LiteralPath (Join-Path $repoRoot 'extension') -Destination (Join-Path $script:copilotHome 'extensions\byok-cli-hub-copilot') -Recurse
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'extension') -Destination (Join-Path $script:copilotHome 'extensions\byok-bridge-copilot') -Recurse
     [IO.File]::WriteAllText($script:pathFile, "$script:dataRoot;C:\ExistingTool", (New-Object Text.UTF8Encoding $false))
 }
 
 try {
     # Fresh install, managed update, failure injection, uninstall, and purge.
     Set-TestEnvironment (Join-Path $testRoot 'fresh-rollback')
-    $env:BYOK_CLI_HUB_TEST_FAIL_AT = 'after-app-backup'
+    $env:BYOK_BRIDGE_TEST_FAIL_AT = 'after-app-backup'
     $failed = $false
     try { & $installer -WithExtension } catch { $failed = $true }
-    Remove-Item Env:\BYOK_CLI_HUB_TEST_FAIL_AT -ErrorAction SilentlyContinue
+    Remove-Item Env:\BYOK_BRIDGE_TEST_FAIL_AT -ErrorAction SilentlyContinue
     Assert-True $failed 'Injected fresh-install failure unexpectedly succeeded.'
     Assert-True (-not (Test-Path -LiteralPath $dataRoot)) 'Fresh-install rollback left initialized data behind.'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $appRoot 'app'))) 'Fresh-install rollback left an application snapshot.'
@@ -117,15 +117,15 @@ try {
     & $installer
     Assert-InstalledReadmeDocumentation $appDir
 
-    $extensionDir = Join-Path $copilotHome 'extensions\byok-cli-hub-copilot'
-    $manifestPath = Join-Path $appDir '.byok-cli-hub-install.json'
+    $extensionDir = Join-Path $copilotHome 'extensions\byok-bridge-copilot'
+    $manifestPath = Join-Path $appDir '.byok-bridge-install.json'
     Assert-True (Test-Path -LiteralPath $manifestPath) 'Manifest missing.'
     $manifest = Get-Content -Raw -LiteralPath $manifestPath -Encoding UTF8 | ConvertFrom-Json
     Assert-True ($manifest.appVersion -eq $expectedAppVersion) 'Manifest appVersion mismatch.'
     Assert-True ($manifest.withExtension -eq $true) 'Managed update did not preserve extension choice.'
     Assert-True (-not $manifest.migratedFrom) 'Fresh install must not report migratedFrom.'
     Assert-True (Test-Path -LiteralPath (Join-Path $dataRoot 'providers.json')) 'Canonical config missing.'
-    Assert-True (Test-Path -LiteralPath (Join-Path $extensionDir '.byok-cli-hub-managed')) 'Extension marker missing.'
+    Assert-True (Test-Path -LiteralPath (Join-Path $extensionDir '.byok-bridge-managed')) 'Extension marker missing.'
     Assert-True ((Get-TestPathEntries) -contains $appDir) 'Application PATH entry missing.'
 
     $originalCopilotHome = $copilotHome
@@ -134,7 +134,7 @@ try {
     try { & $installer } catch { $failed = $true }
     $env:COPILOT_HOME = $originalCopilotHome
     Assert-True $failed 'Managed update unexpectedly relocated the extension directory.'
-    Assert-True (Test-Path -LiteralPath (Join-Path $extensionDir '.byok-cli-hub-managed')) 'Relocation rejection damaged the managed extension.'
+    Assert-True (Test-Path -LiteralPath (Join-Path $extensionDir '.byok-bridge-managed')) 'Relocation rejection damaged the managed extension.'
 
     $manifestBytes = [IO.File]::ReadAllBytes($manifestPath)
     $newerManifest = $manifest
@@ -151,10 +151,10 @@ try {
         $examplePath = Join-Path $dataRoot 'providers.example.json'
         [IO.File]::WriteAllText($examplePath, "example=$failurePoint", (New-Object Text.UTF8Encoding $false))
         $pathBefore = [IO.File]::ReadAllText($pathFile, [Text.Encoding]::UTF8)
-        $env:BYOK_CLI_HUB_TEST_FAIL_AT = $failurePoint
+        $env:BYOK_BRIDGE_TEST_FAIL_AT = $failurePoint
         $failed = $false
         try { & $installer } catch { $failed = $true }
-        Remove-Item Env:\BYOK_CLI_HUB_TEST_FAIL_AT -ErrorAction SilentlyContinue
+        Remove-Item Env:\BYOK_BRIDGE_TEST_FAIL_AT -ErrorAction SilentlyContinue
         Assert-True $failed "Failure point '$failurePoint' did not fail."
         Assert-True ((Get-Content -Raw -LiteralPath (Join-Path $appDir 'rollback-sentinel.txt')).Trim() -eq $failurePoint) "Application rollback failed at '$failurePoint'."
         Assert-True ((Get-Content -Raw -LiteralPath (Join-Path $extensionDir 'rollback-sentinel.txt')).Trim() -eq $failurePoint) "Extension rollback failed at '$failurePoint'."
@@ -175,24 +175,24 @@ try {
     # A failed legacy migration must restore its launcher, extension, PATH, and data.
     New-Legacy001Fixture (Join-Path $testRoot 'legacy-rollback')
     $legacyPathBefore = [IO.File]::ReadAllText($pathFile, [Text.Encoding]::UTF8)
-    $env:BYOK_CLI_HUB_TEST_FAIL_AT = 'after-path-remove'
+    $env:BYOK_BRIDGE_TEST_FAIL_AT = 'after-path-remove'
     $failed = $false
     try { & $installer } catch { $failed = $true }
-    Remove-Item Env:\BYOK_CLI_HUB_TEST_FAIL_AT -ErrorAction SilentlyContinue
+    Remove-Item Env:\BYOK_BRIDGE_TEST_FAIL_AT -ErrorAction SilentlyContinue
     Assert-True $failed 'Legacy migration failure injection did not fail.'
     Assert-True (Test-Path -LiteralPath (Join-Path $dataRoot 'manager')) 'Legacy manager was not restored after rollback.'
     Assert-True (Test-Path -LiteralPath (Join-Path $dataRoot 'byok-cli-hub.cmd')) 'Legacy launcher was not restored after rollback.'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $dataRoot 'providers.json'))) 'Rolled-back migration left canonical config behind.'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $appRoot 'app'))) 'Rolled-back migration left a new application snapshot.'
-    Assert-True (-not (Test-Path -LiteralPath (Join-Path $copilotHome 'extensions\byok-cli-hub-copilot\.byok-cli-hub-managed'))) 'Rolled-back migration claimed the legacy extension.'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $copilotHome 'extensions\byok-bridge-copilot\.byok-bridge-managed'))) 'Rolled-back migration claimed the legacy extension.'
     Assert-True ([IO.File]::ReadAllText($pathFile, [Text.Encoding]::UTF8) -eq $legacyPathBefore) 'Legacy PATH was not restored after rollback.'
 
     # A failure during the legacy move loop must restore items already moved.
     New-Legacy001Fixture (Join-Path $testRoot 'legacy-mid-move-rollback')
-    $env:BYOK_CLI_HUB_TEST_FAIL_AT = 'after-legacy-move-run.cmd'
+    $env:BYOK_BRIDGE_TEST_FAIL_AT = 'after-legacy-move-run.cmd'
     $failed = $false
     try { & $installer } catch { $failed = $true }
-    Remove-Item Env:\BYOK_CLI_HUB_TEST_FAIL_AT -ErrorAction SilentlyContinue
+    Remove-Item Env:\BYOK_BRIDGE_TEST_FAIL_AT -ErrorAction SilentlyContinue
     Assert-True $failed 'Mid-move legacy failure injection did not fail.'
     Assert-True (Test-Path -LiteralPath (Join-Path $dataRoot 'manager')) 'Mid-move rollback did not restore the legacy manager.'
     Assert-True (Test-Path -LiteralPath (Join-Path $dataRoot 'run.cmd')) 'Mid-move rollback did not restore run.cmd.'
@@ -206,8 +206,8 @@ try {
     & $installer
     $appDir = Join-Path $appRoot 'app'
     Assert-InstalledReadmeDocumentation $appDir
-    $extensionDir = Join-Path $copilotHome 'extensions\byok-cli-hub-copilot'
-    $manifest = Get-Content -Raw -LiteralPath (Join-Path $appDir '.byok-cli-hub-install.json') -Encoding UTF8 | ConvertFrom-Json
+    $extensionDir = Join-Path $copilotHome 'extensions\byok-bridge-copilot'
+    $manifest = Get-Content -Raw -LiteralPath (Join-Path $appDir '.byok-bridge-install.json') -Encoding UTF8 | ConvertFrom-Json
     Assert-True ($manifest.appVersion -eq $expectedAppVersion -and $manifest.migratedFrom -eq '0.0.1') 'Legacy migration metadata is incorrect.'
     Assert-True ($manifest.withExtension -eq $true) 'Legacy extension choice was not preserved.'
     Assert-True (Test-Path -LiteralPath (Join-Path $dataRoot 'providers.json')) 'Legacy config was not migrated.'
@@ -218,7 +218,7 @@ try {
         Assert-True (-not (Test-Path -LiteralPath (Join-Path $dataRoot $legacyName))) "Legacy application item was not cleaned: $legacyName"
     }
     Assert-True (Test-Path -LiteralPath (Join-Path $dataRoot 'unknown-user-file.txt')) 'Unknown user file was removed.'
-    Assert-True (Test-Path -LiteralPath (Join-Path $extensionDir '.byok-cli-hub-managed')) 'Legacy extension was not adopted.'
+    Assert-True (Test-Path -LiteralPath (Join-Path $extensionDir '.byok-bridge-managed')) 'Legacy extension was not adopted.'
     $entries = Get-TestPathEntries
     Assert-True ($entries -notcontains $dataRoot) 'Legacy PATH entry was not removed.'
     Assert-True ($entries -contains $appDir) 'New PATH entry was not added.'
@@ -243,19 +243,97 @@ try {
 
     # Unknown legacy extension content is preserved without taking ownership.
     New-Legacy001Fixture (Join-Path $testRoot 'unknown-extension')
-    $unknownExtensionDir = Join-Path $copilotHome 'extensions\byok-cli-hub-copilot'
+    $unknownExtensionDir = Join-Path $copilotHome 'extensions\byok-bridge-copilot'
     Remove-Item -LiteralPath (Join-Path $unknownExtensionDir 'package.json') -Force
     Set-Content -LiteralPath (Join-Path $unknownExtensionDir 'unknown-owner.txt') -Value 'preserve-me' -Encoding UTF8
     & $installer
     $appDir = Join-Path $appRoot 'app'
-    $manifest = Get-Content -Raw -LiteralPath (Join-Path $appDir '.byok-cli-hub-install.json') -Encoding UTF8 | ConvertFrom-Json
+    $manifest = Get-Content -Raw -LiteralPath (Join-Path $appDir '.byok-bridge-install.json') -Encoding UTF8 | ConvertFrom-Json
     Assert-True ($manifest.withExtension -eq $false) 'Unknown extension was recorded as managed.'
     Assert-True (Test-Path -LiteralPath (Join-Path $unknownExtensionDir 'unknown-owner.txt')) 'Unknown extension content was removed.'
-    Assert-True (-not (Test-Path -LiteralPath (Join-Path $unknownExtensionDir '.byok-cli-hub-managed'))) 'Unknown extension received a managed marker.'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $unknownExtensionDir '.byok-bridge-managed'))) 'Unknown extension received a managed marker.'
+
+    # A managed v0.0.3 tree moves to the new product paths only after the
+    # snapshot, extension and user PATH can all be switched transactionally.
+    $savedLocalAppData = $env:LOCALAPPDATA
+    $savedUserProfile = $env:USERPROFILE
+    $managedLegacyRoot = Join-Path $testRoot 'managed-003'
+    $env:LOCALAPPDATA = Join-Path $managedLegacyRoot 'local-app-data'
+    $env:USERPROFILE = Join-Path $managedLegacyRoot 'profile'
+    $env:COPILOT_HOME = Join-Path $managedLegacyRoot 'copilot-home'
+    $pathFile = Join-Path $managedLegacyRoot 'user-path.txt'
+    New-Item -ItemType Directory -Force -Path $env:LOCALAPPDATA, $env:USERPROFILE, $env:COPILOT_HOME | Out-Null
+    [IO.File]::WriteAllText($pathFile, 'C:\ExistingTool', (New-Object Text.UTF8Encoding $false))
+    $env:BYOK_BRIDGE_TEST_USER_PATH_FILE = $pathFile
+    Remove-Item Env:\BYOK_BRIDGE_INSTALL_ROOT, Env:\BYOK_BRIDGE_DATA_DIR -ErrorAction SilentlyContinue
+
+    $legacyAppDir = Join-Path $env:LOCALAPPDATA 'byok-cli-hub\app'
+    $legacyDataDir = Join-Path $env:USERPROFILE '.byok-cli-hub'
+    $legacyExtensionDir = Join-Path $env:COPILOT_HOME 'extensions\byok-cli-hub-copilot'
+    New-Item -ItemType Directory -Force -Path $legacyAppDir, $legacyDataDir, $legacyExtensionDir | Out-Null
+    Set-Content -LiteralPath (Join-Path $legacyAppDir 'byok-cli-hub.cmd') -Value '@echo legacy-launcher' -Encoding ASCII
+    Set-Content -LiteralPath (Join-Path $legacyDataDir '.byok-cli-hub-data') -Value '' -Encoding ASCII
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'config\providers.example.json') -Destination (Join-Path $legacyDataDir 'providers.json')
+    Set-Content -LiteralPath (Join-Path $legacyDataDir 'state.json') -Value '{"providerId":"legacy","model":"legacy-model"}' -Encoding UTF8
+    Set-Content -LiteralPath (Join-Path $legacyDataDir 'models-cache.json') -Value '{"version":1,"caches":{}}' -Encoding UTF8
+    Set-Content -LiteralPath (Join-Path $legacyDataDir 'user-file.txt') -Value 'preserve-me' -Encoding UTF8
+    Set-Content -LiteralPath (Join-Path $legacyExtensionDir '.byok-cli-hub-managed') -Value '' -Encoding ASCII
+    $legacyManifest = [ordered]@{
+        schemaVersion = 1; product = 'byok-cli-hub'; appVersion = '0.0.3'; installedAt = [DateTime]::UtcNow.ToString('o')
+        installDir = $legacyAppDir; dataDir = $legacyDataDir; extensionDir = $legacyExtensionDir; withExtension = $true
+    }
+    [IO.File]::WriteAllText((Join-Path $legacyAppDir '.byok-cli-hub-install.json'), (($legacyManifest | ConvertTo-Json -Depth 5) + "`n"), (New-Object Text.UTF8Encoding $false))
+    [IO.File]::WriteAllText($pathFile, "$legacyAppDir;C:\ExistingTool", (New-Object Text.UTF8Encoding $false))
+
+    # Invalid legacy settings are rejected before any data is copied to the new
+    # product path, so the error points at the source file the user must repair.
+    $legacyProvidersPath = Join-Path $legacyDataDir 'providers.json'
+    $legacyProvidersBytes = [IO.File]::ReadAllBytes($legacyProvidersPath)
+    [IO.File]::WriteAllText($legacyProvidersPath, '{"version":1,}', (New-Object Text.UTF8Encoding $false))
+    $failed = $false
+    $failureMessage = ''
+    try { & $installer } catch { $failed = $true; $failureMessage = $_.Exception.Message }
+    Assert-True $failed 'Malformed managed legacy config was accepted.'
+    Assert-True ($failureMessage.Contains($legacyProvidersPath)) 'Legacy config preflight error did not identify the source file.'
+    Assert-True (Test-Path -LiteralPath $legacyAppDir) 'Legacy application changed after config preflight rejection.'
+    Assert-True (Test-Path -LiteralPath $legacyDataDir) 'Legacy data changed after config preflight rejection.'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'byok-bridge'))) 'Config preflight created a new application root.'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.byok-bridge'))) 'Config preflight created a new data directory.'
+    [IO.File]::WriteAllBytes($legacyProvidersPath, $legacyProvidersBytes)
+
+    $env:BYOK_BRIDGE_TEST_FAIL_AT = 'legacy-data-copy'
+    $failed = $false
+    try { & $installer } catch { $failed = $true }
+    Remove-Item Env:\BYOK_BRIDGE_TEST_FAIL_AT -ErrorAction SilentlyContinue
+    Assert-True $failed 'Legacy data-copy failure unexpectedly succeeded.'
+    Assert-True (Test-Path -LiteralPath $legacyAppDir) 'Legacy application changed after data-copy rollback.'
+    Assert-True (Test-Path -LiteralPath $legacyDataDir) 'Legacy data changed after data-copy rollback.'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'byok-bridge\app'))) 'Data-copy rollback left a new application.'
+
+    & $installer
+    $migratedAppDir = Join-Path $env:LOCALAPPDATA 'byok-bridge\app'
+    $migratedDataDir = Join-Path $env:USERPROFILE '.byok-bridge'
+    $migratedExtensionDir = Join-Path $env:COPILOT_HOME 'extensions\byok-bridge-copilot'
+    $migratedManifest = Get-Content -Raw -LiteralPath (Join-Path $migratedAppDir '.byok-bridge-install.json') -Encoding UTF8 | ConvertFrom-Json
+    Assert-True ($migratedManifest.migratedFrom -eq '0.0.3') 'Managed legacy migration metadata is incorrect.'
+    Assert-True (Test-Path -LiteralPath (Join-Path $migratedAppDir 'byok.cmd')) 'New byok launcher is missing.'
+    Assert-True (Test-Path -LiteralPath (Join-Path $migratedDataDir 'providers.json')) 'Legacy providers config was not migrated.'
+    Assert-True (Test-Path -LiteralPath (Join-Path $migratedDataDir 'state.json')) 'Legacy state was not migrated.'
+    Assert-True (Test-Path -LiteralPath (Join-Path $migratedDataDir 'models-cache.json')) 'Legacy cache was not migrated.'
+    Assert-True (Test-Path -LiteralPath (Join-Path $migratedDataDir 'user-file.txt')) 'Unmanaged user data was not preserved.'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $migratedDataDir '.byok-cli-hub-data'))) 'Legacy data marker leaked into the new data directory.'
+    Assert-True (Test-Path -LiteralPath (Join-Path $migratedExtensionDir '.byok-bridge-managed')) 'Legacy extension was not migrated.'
+    Assert-True (-not (Test-Path -LiteralPath $legacyAppDir)) 'Legacy application was not removed after success.'
+    Assert-True (-not (Test-Path -LiteralPath $legacyDataDir)) 'Legacy data was not removed after success.'
+    Assert-True (-not (Test-Path -LiteralPath $legacyExtensionDir)) 'Legacy extension was not removed after success.'
+    Assert-True ((Get-TestPathEntries) -contains $migratedAppDir) 'New application PATH entry was not added after migration.'
+    Assert-True ((Get-TestPathEntries) -notcontains $legacyAppDir) 'Legacy application PATH entry was not removed.'
+    $env:LOCALAPPDATA = $savedLocalAppData
+    $env:USERPROFILE = $savedUserProfile
 
     Write-Host 'Windows fresh/update/rollback/0.0.1 migration/ownership/uninstaller tests passed.' -ForegroundColor Green
 } finally {
-    foreach ($name in @('BYOK_CLI_HUB_INSTALL_ROOT','BYOK_CLI_HUB_DATA_DIR','COPILOT_HOME','BYOK_CLI_HUB_TEST_USER_PATH_FILE','BYOK_CLI_HUB_TEST_FAIL_AT')) {
+    foreach ($name in @('BYOK_BRIDGE_INSTALL_ROOT','BYOK_BRIDGE_DATA_DIR','COPILOT_HOME','BYOK_BRIDGE_TEST_USER_PATH_FILE','BYOK_BRIDGE_TEST_FAIL_AT')) {
         Remove-Item -Path "Env:$name" -ErrorAction SilentlyContinue
     }
     if ((Test-Path -LiteralPath $testRoot) -and $testRoot.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) {

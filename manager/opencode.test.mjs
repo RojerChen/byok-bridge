@@ -23,7 +23,7 @@ const template = {
   provider: {
     '{opencode_provider_id}': {
       npm: '@ai-sdk/openai-compatible',
-      name: '{provider_name} (BYOK CLI Hub)',
+      name: '{provider_name} (BYOK Bridge)',
       options: { baseURL: '{url}', apiKey: '{api_key_ref}' },
       models: '{models}'
     }
@@ -78,10 +78,10 @@ describe('OpenCode config adapter', () => {
   });
 
   test('creates a deterministic runtime provider ID', () => {
-    assert.equal(getOpenCodeProviderId('company-gateway'), 'byok-cli-hub-company-gateway');
+    assert.equal(getOpenCodeProviderId('company-gateway'), 'byok-bridge-company-gateway');
     const source = 'Company Gateway/台灣';
     const hash = crypto.createHash('sha256').update(source, 'utf8').digest('hex').slice(0, 8);
-    assert.equal(getOpenCodeProviderId(source), `byok-cli-hub-company-gateway-${hash}`);
+    assert.equal(getOpenCodeProviderId(source), `byok-bridge-company-gateway-${hash}`);
   });
 
   test('renders models as typed object keys and references the key through the environment', () => {
@@ -98,13 +98,13 @@ describe('OpenCode config adapter', () => {
       chosenModelSource: 'option'
     });
 
-    const provider = result.config.provider['byok-cli-hub-company-gateway'];
+    const provider = result.config.provider['byok-bridge-company-gateway'];
     assert.deepEqual(Object.keys(provider.models), [
       'Model/A', '__proto__', 'constructor', 'space model', 'quote"model', 'back\\slash', '模型', 'foo', 'Foo', 'Extra/Model'
     ]);
     assert.equal(provider.models['__proto__'].name, '__proto__');
     assert.equal(provider.options.apiKey, `{env:${OPENCODE_API_KEY_ENV}}`);
-    assert.equal(result.config.model, 'byok-cli-hub-company-gateway/Extra/Model');
+    assert.equal(result.config.model, 'byok-bridge-company-gateway/Extra/Model');
     assert.equal(result.config.preserved, '{env:UNRELATED_VALUE}');
     assert.equal(JSON.stringify(result.config).includes(apiKey), false);
     assert.equal(JSON.stringify(template), originalTemplate);
@@ -121,7 +121,7 @@ describe('OpenCode config adapter', () => {
       chosenModel: 'local-model',
       chosenModelSource: 'first-available'
     });
-    assert.equal(Object.hasOwn(result.config.provider['byok-cli-hub-local'].options, 'apiKey'), false);
+    assert.equal(Object.hasOwn(result.config.provider['byok-bridge-local'].options, 'apiKey'), false);
   });
 
   test('rejects unsafe placeholders, misplaced typed values, and key collisions', () => {
@@ -220,9 +220,9 @@ describe('OpenCode config adapter', () => {
     fs.writeFileSync(fakeCliPath, [
       "import fs from 'node:fs';",
       "const config = JSON.parse(fs.readFileSync(process.env.OPENCODE_CONFIG, 'utf8'));",
-      "const providerId = Object.keys(config.provider).find(id => id.startsWith('byok-cli-hub-'));",
+      "const providerId = Object.keys(config.provider).find(id => id.startsWith('byok-bridge-'));",
       "if (!providerId || config.model !== providerId + '/Model/A') process.exit(21);",
-      "if (process.env.BYOK_CLI_HUB_OPENCODE_API_KEY !== 'fake-launch-secret') process.exit(22);",
+      "if (process.env.BYOK_BRIDGE_OPENCODE_API_KEY !== 'fake-launch-secret') process.exit(22);",
       "if (process.env.COPILOT_PROVIDER_API_KEY !== 'fake-launch-secret' || process.env.COPILOT_MODEL !== 'Model/A') process.exit(23);",
       "if (process.env.PROVIDER_WIDE !== 'Company.Gateway:Model/A') process.exit(24);",
       "console.log('FAKE_OPENCODE_LOADED=' + providerId);"
@@ -245,7 +245,7 @@ describe('OpenCode config adapter', () => {
     });
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
-    assert.match(result.stdout, /FAKE_OPENCODE_LOADED=byok-cli-hub-/);
+    assert.match(result.stdout, /FAKE_OPENCODE_LOADED=byok-bridge-/);
     assert.doesNotMatch(result.stdout + result.stderr, /fake-launch-secret/);
   });
 
@@ -262,7 +262,7 @@ describe('OpenCode config adapter', () => {
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
     assert.match(result.stdout, /OpenCode API key: \[missing\]/);
-    assert.doesNotMatch(result.stdout, /BYOK_CLI_HUB_OPENCODE_API_KEY=/);
+    assert.doesNotMatch(result.stdout, /BYOK_BRIDGE_OPENCODE_API_KEY=/);
     assert.equal(fs.existsSync(path.join(tmpDir, 'opencode.json')), false);
     assert.equal(fs.existsSync(path.join(tmpDir, 'state.json')), false);
   });
@@ -328,7 +328,7 @@ describe('OpenCode config adapter', () => {
       '-Model', 'Model/A'
     ], {
       encoding: 'utf8',
-      env: { ...process.env, BYOK_CLI_HUB_DATA_DIR: tmpDir }
+      env: { ...process.env, BYOK_BRIDGE_DATA_DIR: tmpDir }
     });
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -358,7 +358,7 @@ describe('OpenCode config adapter', () => {
     const refresh = spawnSync('pwsh', [
       '-NoProfile', '-File', scriptPath,
       '-Cli', 'opencode', '-Provider', 'Company.Gateway', '-Model', 'Model/B', '-Refresh'
-    ], { encoding: 'utf8', env: { ...process.env, BYOK_CLI_HUB_DATA_DIR: tmpDir } });
+    ], { encoding: 'utf8', env: { ...process.env, BYOK_BRIDGE_DATA_DIR: tmpDir } });
     assert.equal(refresh.status, 0, refresh.stderr || refresh.stdout);
     assert.equal(fs.readFileSync(generatedPath, 'utf8'), '{"existing":true}\n');
     const refreshedState = JSON.parse(fs.readFileSync(path.join(tmpDir, 'state.json'), 'utf8'));
@@ -395,7 +395,7 @@ describe('OpenCode config adapter', () => {
       env: { ...process.env, OPENCODE_CONFIG: configPath }
     });
     assert.equal(debug.status, 0, debug.stderr || debug.stdout);
-    assert.match(debug.stdout, /byok-cli-hub-live-check/);
+    assert.match(debug.stdout, /byok-bridge-live-check/);
     assert.match(debug.stdout, /Model\/A/);
   });
 });

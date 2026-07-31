@@ -1,4 +1,4 @@
-# ByokManager.psm1 — shared PowerShell helpers for BYOK CLI Hub.
+# ByokManager.psm1 — shared PowerShell helpers for BYOK Bridge.
 # Pure data layer: data dir, provider config, state, cache, model fetch, env map.
 # No stdin interaction here — the calling script handles prompts.
 
@@ -6,9 +6,7 @@
 
 function Get-ByokDataDir {
     param([switch]$NoCreate)
-    $override = if ($env:BYOK_CLI_HUB_DATA_DIR -and $env:BYOK_CLI_HUB_DATA_DIR.Trim()) {
-        $env:BYOK_CLI_HUB_DATA_DIR
-    } else { $env:BYOK_MODEL_V3_DATA_DIR }
+    $override = $env:BYOK_BRIDGE_DATA_DIR
     if ($override -and $override.Trim()) {
         $resolved = $override.Trim()
         if (-not (Test-Path $resolved)) {
@@ -17,10 +15,7 @@ function Get-ByokDataDir {
         }
         return (Resolve-Path -LiteralPath $resolved).Path
     }
-    $newPath = Join-Path $env:USERPROFILE '.byok-cli-hub'
-    $legacyPath = Join-Path $env:USERPROFILE '.copilot\byok-model-v3'
-    if ((Test-Path $newPath) -or -not (Test-Path $legacyPath)) { return $newPath }
-    return $legacyPath
+    return (Join-Path $env:USERPROFILE '.byok-bridge')
 }
 
 function Get-ByokConfigPath {
@@ -865,7 +860,7 @@ function Get-ByokOpenCodeProviderId {
         $hash = ([BitConverter]::ToString($hashBytes)).Replace('-', '').ToLowerInvariant().Substring(0, 8)
         $suffix = "-$hash"
     }
-    return "byok-cli-hub-$slug$suffix"
+    return "byok-bridge-$slug$suffix"
 }
 
 function Convert-ByokOpenCodeTemplateNode {
@@ -954,7 +949,7 @@ function Build-ByokOpenCodeConfig {
         '{provider_name}' = $ProviderName
         '{model}' = $selectedModel
         '{models}' = $modelMap
-        '{api_key_ref}' = '{env:BYOK_CLI_HUB_OPENCODE_API_KEY}'
+        '{api_key_ref}' = '{env:BYOK_BRIDGE_OPENCODE_API_KEY}'
     }
     $config = Convert-ByokOpenCodeTemplateNode $Template $subs $includeApiKeyReference
     if (-not $config.Contains('$schema') -or $config['$schema'] -isnot [string] -or -not $config['$schema'].Trim()) {
@@ -967,7 +962,7 @@ function Build-ByokOpenCodeConfig {
         if (-not $runtimeProvider['models'].Contains($id)) { throw "Generated OpenCode config is missing model '$id'." }
     }
     $hasApiKey = $runtimeProvider['options'].Contains('apiKey')
-    if ($includeApiKeyReference -and (-not $hasApiKey -or $runtimeProvider['options']['apiKey'] -cne '{env:BYOK_CLI_HUB_OPENCODE_API_KEY}')) {
+    if ($includeApiKeyReference -and (-not $hasApiKey -or $runtimeProvider['options']['apiKey'] -cne '{env:BYOK_BRIDGE_OPENCODE_API_KEY}')) {
         throw 'Generated OpenCode config has an invalid API key environment reference.'
     }
     if (-not $includeApiKeyReference -and $hasApiKey) { throw 'Generated OpenCode config must omit options.apiKey.' }

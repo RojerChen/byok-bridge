@@ -4,7 +4,7 @@
     No HTTP server: tests config load, cache merge, env-map templating, and
     state round-trip with synthetic inputs. The live fetch path is covered by
     running the real manager against a provider (see README / doc/summary.md).
-    Uses an isolated BYOK_CLI_HUB_DATA_DIR so it never touches the real cache.
+    Uses an isolated BYOK_BRIDGE_DATA_DIR so it never touches the real cache.
 #>
 [CmdletBinding()]
 param()
@@ -18,7 +18,7 @@ if (Test-Path $dataDir) { Remove-Item $dataDir -Recurse -Force }
 New-Item -ItemType Directory -Force -Path (Join-Path $dataDir 'config') | Out-Null
 
 try {
-    $env:BYOK_CLI_HUB_DATA_DIR = $dataDir
+    $env:BYOK_BRIDGE_DATA_DIR = $dataDir
 
     $providers = [ordered]@{
         version = 1
@@ -176,11 +176,10 @@ try {
     Write-ByokOpenCodeConfig $openCodePath $openCodeResult.config | Out-Null
     $openCodeJson = [IO.File]::ReadAllText($openCodePath, [Text.Encoding]::UTF8)
     if (-not $openCodeJson.Contains('"Model/A"') -or -not $openCodeJson.Contains('"model/a"') -or -not $openCodeJson.Contains('"__proto__"')) { throw 'OpenCode model IDs were not preserved exactly' }
-    if (-not $openCodeJson.Contains('{env:BYOK_CLI_HUB_OPENCODE_API_KEY}') -or $openCodeJson.Contains('secret-value')) { throw 'OpenCode API key reference mismatch' }
+    if (-not $openCodeJson.Contains('{env:BYOK_BRIDGE_OPENCODE_API_KEY}') -or $openCodeJson.Contains('secret-value')) { throw 'OpenCode API key reference mismatch' }
 
     Write-Host 'Smoke test passed.' -ForegroundColor Green
 } finally {
-    Remove-Item Env:\BYOK_CLI_HUB_DATA_DIR -ErrorAction SilentlyContinue
-    Remove-Item Env:\BYOK_MODEL_V3_DATA_DIR -ErrorAction SilentlyContinue
+    Remove-Item Env:\BYOK_BRIDGE_DATA_DIR -ErrorAction SilentlyContinue
     Remove-Item $dataDir -Recurse -Force -ErrorAction SilentlyContinue
 }

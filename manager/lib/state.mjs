@@ -5,15 +5,15 @@ import { withFileLock } from '../../extension/lib/file-lock.mjs';
 
 
 /**
- * Gets the BYOK CLI Hub data directory root.
- * Priority: explicit override -> BYOK_CLI_HUB_DATA_DIR -> legacy alias -> default.
+ * Gets the BYOK Bridge data directory root.
+ * Priority: explicit override -> BYOK_BRIDGE_DATA_DIR -> default.
  */
 export function getByokDataDir(overrideDir = null) {
   if (overrideDir && typeof overrideDir === 'string' && overrideDir.trim()) {
     return path.resolve(overrideDir.trim());
   }
 
-  let envDir = process.env.BYOK_CLI_HUB_DATA_DIR || process.env.BYOK_MODEL_V3_DATA_DIR;
+  let envDir = process.env.BYOK_BRIDGE_DATA_DIR;
   if (envDir && envDir.trim()) {
     envDir = envDir.trim();
     if (process.platform !== 'win32' && (/^[A-Za-z]:\\/.test(envDir) || envDir.includes('\\'))) {
@@ -22,7 +22,7 @@ export function getByokDataDir(overrideDir = null) {
     if (envDir) return path.resolve(envDir);
   }
 
-  return path.join(os.homedir(), '.byok-cli-hub');
+  return path.join(os.homedir(), '.byok-bridge');
 }
 
 export function readJson(filePath, defaultValue = null) {

@@ -60,10 +60,10 @@ let uiForErrors = null;
 
 function printHelp() {
   console.log(`
-BYOK CLI Hub Manager (Linux / Node.js)
+BYOK Bridge Manager (Linux / Node.js)
 
 Usage:
-  byok-cli-hub [options] [-- [CLI_ARGS...]]
+  byok [options] [-- [CLI_ARGS...]]
 
 Options:
   --cli ID          Select CLI to launch (e.g. copilot)
@@ -81,7 +81,7 @@ Options:
 }
 
 async function runSelfCheck(dataDir) {
-  console.log('[SELF-CHECK] Running BYOK CLI Hub preflight checks...');
+  console.log('[SELF-CHECK] Running BYOK Bridge preflight checks...');
   
   // Check Node.js version >= 22
   const majorVersion = parseInt(process.versions.node.split('.')[0], 10);
@@ -420,7 +420,7 @@ async function main() {
   const envMap = isOpenCode
     ? buildAdapterRuntimeEnvMap(selectedProvider, baseUrl, chosenModel, apiKey, selectedProvider.id, selectedCli)
     : buildRuntimeEnvMap(selectedProvider, baseUrl, chosenModel, apiKey, selectedProvider.id, selectedCli);
-  envMap.BYOK_CLI_HUB_DATA_DIR = dataDir;
+  envMap.BYOK_BRIDGE_DATA_DIR = dataDir;
   let openCodeOutput = null;
   let openCodeConfigPath = null;
   if (isOpenCode && !options.refresh) {

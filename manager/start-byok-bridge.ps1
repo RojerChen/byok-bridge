@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <###
-    Official BYOK CLI Hub manager entry point.
+    Official BYOK Bridge manager entry point.
     The implementation is kept in start-copilot-byok.ps1; this forwarding
     entry point keeps the platform-neutral command name stable.
 ###>

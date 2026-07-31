@@ -263,7 +263,7 @@ export function getDefaultConfigStructure() {
           provider: {
             '{opencode_provider_id}': {
               npm: '@ai-sdk/openai-compatible',
-              name: '{provider_name} (BYOK CLI Hub)',
+              name: '{provider_name} (BYOK Bridge)',
               options: {
                 baseURL: '{url}',
                 apiKey: '{api_key_ref}'

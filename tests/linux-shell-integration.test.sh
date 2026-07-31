@@ -10,7 +10,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-bash -n "$REPO_ROOT/shell/bash/byok-cli-hub.bash"
+bash -n "$REPO_ROOT/shell/bash/byok-bridge.bash"
 
 mkdir -p "$TEST_ROOT/data" "$TEST_ROOT/fake-bin"
 FAKE_CLI="$TEST_ROOT/fake-bin/fake-ai-cli"
@@ -80,7 +80,7 @@ const config = {
 fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
 NODE
 
-unset TEST_URL TEST_KEY TEST_MODEL COMPLEX_VALUE FIRST_ONLY SECOND_ONLY PROVIDER_VALUE BYOK_CLI_HUB_DATA_DIR || true
+unset TEST_URL TEST_KEY TEST_MODEL COMPLEX_VALUE FIRST_ONLY SECOND_ONLY PROVIDER_VALUE BYOK_BRIDGE_DATA_DIR || true
 export TEST_RESTORE='original-value'
 TEST_UNEXPORTED='unexported-original'
 export BYOK_TEST_CAPTURE="$CAPTURE_FILE"
@@ -88,7 +88,7 @@ PATH="$REPO_ROOT/bin/linux:$PATH"
 export PATH
 
 # Executing the helper cannot affect the caller and must be rejected.
-if bash "$REPO_ROOT/shell/bash/byok-cli-hub.bash" >/dev/null 2>&1; then
+if bash "$REPO_ROOT/shell/bash/byok-bridge.bash" >/dev/null 2>&1; then
   echo 'Shell integration helper unexpectedly allowed direct execution.' >&2
   exit 1
 else
@@ -96,13 +96,13 @@ else
 fi
 
 # Sourcing only registers functions; it must not resolve or apply a plan.
-source "$REPO_ROOT/shell/bash/byok-cli-hub.bash"
-declare -F byok-cli-hub >/dev/null
-declare -F byok-cli-hub-deactivate >/dev/null
+source "$REPO_ROOT/shell/bash/byok-bridge.bash"
+declare -F byok >/dev/null
+declare -F byok-deactivate >/dev/null
 [[ "$TEST_RESTORE" == 'original-value' ]]
 [[ -z "${TEST_URL+x}" ]]
 
-byok-cli-hub \
+byok \
   --data-dir "$TEST_ROOT/data" \
   --cli test \
   --provider first \
@@ -118,19 +118,19 @@ byok-cli-hub \
 [[ "$TEST_RESTORE" == 'first-plan' ]]
 [[ "$TEST_UNEXPORTED" == 'managed-one' ]]
 [[ "$(declare -p TEST_UNEXPORTED)" == declare\ -x* ]]
-[[ "$BYOK_CLI_HUB_DATA_DIR" == "$TEST_ROOT/data" ]]
+[[ "$BYOK_BRIDGE_DATA_DIR" == "$TEST_ROOT/data" ]]
 grep -q '^key=session-secret$' "$CAPTURE_FILE"
 grep -q '^arg1=space value$' "$CAPTURE_FILE"
 grep -Fq 'arg2=$(not-executed)' "$CAPTURE_FILE"
 grep -q '^arg3=$' "$CAPTURE_FILE"
 
 # Re-sourcing is idempotent and keeps the active transaction bookkeeping.
-source "$REPO_ROOT/shell/bash/byok-cli-hub.bash"
+source "$REPO_ROOT/shell/bash/byok-bridge.bash"
 [[ "$FIRST_ONLY" == 'first:model-one' ]]
 [[ "$TEST_RESTORE" == 'first-plan' ]]
 
 # Non-launch actions must not alter the active parent-shell plan.
-byok-cli-hub \
+byok \
   --data-dir "$TEST_ROOT/data" \
   --cli test \
   --provider second \
@@ -140,7 +140,7 @@ byok-cli-hub \
 [[ -z "${SECOND_ONLY+x}" ]]
 
 # A second launch replaces the complete plan and removes first-only values.
-byok-cli-hub \
+byok \
   --data-dir "$TEST_ROOT/data" \
   --cli test \
   --provider second \
@@ -157,7 +157,7 @@ byok-cli-hub \
 # Explicit user changes made while active are preserved by deactivate.
 PROVIDER_VALUE='manual-override'
 export PROVIDER_VALUE
-byok-cli-hub-deactivate
+byok-deactivate
 [[ "$PROVIDER_VALUE" == 'manual-override' ]]
 [[ "$TEST_RESTORE" == 'original-value' ]]
 [[ "$TEST_UNEXPORTED" == 'unexported-original' ]]
@@ -167,7 +167,7 @@ byok-cli-hub-deactivate
 [[ -z "${TEST_MODEL+x}" ]]
 [[ -z "${COMPLEX_VALUE+x}" ]]
 [[ -z "${SECOND_ONLY+x}" ]]
-[[ -z "${BYOK_CLI_HUB_DATA_DIR+x}" ]]
+[[ -z "${BYOK_BRIDGE_DATA_DIR+x}" ]]
 
 # Malformed protocol and subshell use fail without partial mutation.
 MALFORMED_SHIM="$TEST_ROOT/fake-bin/malformed-shim"
@@ -176,15 +176,15 @@ cat > "$MALFORMED_SHIM" << 'EOF'
 printf 'not-a-shell-plan\n' >&3
 EOF
 chmod 755 "$MALFORMED_SHIM"
-REAL_COMMAND_BACKUP="$_BYOK_CLI_HUB_REAL_COMMAND"
-_BYOK_CLI_HUB_REAL_COMMAND="$MALFORMED_SHIM"
-if byok-cli-hub >/dev/null 2>&1; then
+REAL_COMMAND_BACKUP="$_BYOK_BRIDGE_REAL_COMMAND"
+_BYOK_BRIDGE_REAL_COMMAND="$MALFORMED_SHIM"
+if byok >/dev/null 2>&1; then
   echo 'Malformed shell plan unexpectedly succeeded.' >&2
   exit 1
 fi
-_BYOK_CLI_HUB_REAL_COMMAND="$REAL_COMMAND_BACKUP"
+_BYOK_BRIDGE_REAL_COMMAND="$REAL_COMMAND_BACKUP"
 [[ "$PROVIDER_VALUE" == 'manual-override' ]]
-if (byok-cli-hub --help >/dev/null 2>&1); then
+if (byok --help >/dev/null 2>&1); then
   echo 'Subshell shell-integration invocation unexpectedly succeeded.' >&2
   exit 1
 fi
@@ -194,7 +194,7 @@ export TEST_KEY='xtrace-secret'
 TRACE_FILE="$TEST_ROOT/xtrace.log"
 {
   set -x
-  byok-cli-hub \
+  byok \
     --data-dir "$TEST_ROOT/data" \
     --cli test \
     --provider first \
@@ -205,13 +205,13 @@ if grep -Fq 'xtrace-secret' "$TRACE_FILE"; then
   echo 'Shell xtrace leaked the API key.' >&2
   exit 1
 fi
-byok-cli-hub-deactivate
+byok-deactivate
 [[ "$TEST_KEY" == 'xtrace-secret' ]]
 unset TEST_KEY
 
 # The original executable remains available and cannot modify this Bash.
-unset TEST_URL TEST_MODEL FIRST_ONLY SECOND_ONLY BYOK_CLI_HUB_DATA_DIR || true
-command byok-cli-hub \
+unset TEST_URL TEST_MODEL FIRST_ONLY SECOND_ONLY BYOK_BRIDGE_DATA_DIR || true
+command byok \
   --data-dir "$TEST_ROOT/data" \
   --cli test \
   --provider first \
@@ -220,8 +220,8 @@ command byok-cli-hub \
 [[ -z "${TEST_URL+x}" ]]
 [[ -z "${TEST_MODEL+x}" ]]
 
-byok-cli-hub-shell-unload
-if declare -F byok-cli-hub >/dev/null; then
+byok-shell-unload
+if declare -F byok >/dev/null; then
   echo 'Shell integration function remained after unload.' >&2
   exit 1
 fi

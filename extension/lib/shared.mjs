@@ -4,14 +4,12 @@ import path from "node:path";
 import { withFileLock } from "./file-lock.mjs";
 
 export function getDataDir() {
-  let override = process.env.BYOK_CLI_HUB_DATA_DIR?.trim() || process.env.BYOK_MODEL_V3_DATA_DIR?.trim();
+  let override = process.env.BYOK_BRIDGE_DATA_DIR?.trim();
   if (override && process.platform !== "win32" && (/^[A-Za-z]:\\/.test(override) || override.includes("\\"))) {
     override = null;
   }
   if (override) return path.resolve(override);
-  const current = path.join(os.homedir(), ".byok-cli-hub");
-  const legacy = path.join(os.homedir(), ".copilot", "byok-model-v3");
-  return fs.existsSync(current) || !fs.existsSync(legacy) ? current : legacy;
+  return path.join(os.homedir(), ".byok-bridge");
 }
 
 function readJsonStrict(filePath, fallback) {

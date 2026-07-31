@@ -6,7 +6,7 @@ Both platforms use this canonical user config path:
 <data-dir>/providers.json
 ```
 
-Defaults are `%USERPROFILE%\.byok-cli-hub\providers.json` on Windows and `$HOME/.byok-cli-hub/providers.json` on Linux/WSL. A legacy Windows `config/providers.json` is migrated to the canonical location and preserved.
+Defaults are `%USERPROFILE%\.byok-bridge\providers.json` on Windows and `$HOME/.byok-bridge/providers.json` on Linux/WSL. A legacy Windows `config/providers.json` is migrated to the canonical location and preserved.
 
 [`config/providers.example.json`](../config/providers.example.json) is the canonical, complete starting configuration installed for users. The shortened JSON below illustrates the relevant structure; use the example file for the complete current schema and defaults.
 
@@ -37,7 +37,7 @@ Defaults are `%USERPROFILE%\.byok-cli-hub\providers.json` on Windows and `$HOME/
         "provider": {
           "{opencode_provider_id}": {
             "npm": "@ai-sdk/openai-compatible",
-            "name": "{provider_name} (BYOK CLI Hub)",
+            "name": "{provider_name} (BYOK Bridge)",
             "options": {
               "baseURL": "{url}",
               "apiKey": "{api_key_ref}"
@@ -73,9 +73,9 @@ Defaults are `%USERPROFILE%\.byok-cli-hub\providers.json` on Windows and `$HOME/
 
 A provider's `environment` may contain provider-wide environment templates directly. It may also contain a CLI ID whose value is another environment map for CLI-specific overrides; CLI-specific values take precedence over provider-wide values.
 
-In an OpenCode config template, `{api_key_ref}` is valid only as the complete `provider.*.options.apiKey` value. The Manager renders it as `{env:BYOK_CLI_HUB_OPENCODE_API_KEY}` (or removes `options.apiKey` for an optional provider with no key); it never expands to the plaintext credential. Environment maps continue to use `{api_key}` when the resolved key itself must be assigned to a runtime environment variable.
+In an OpenCode config template, `{api_key_ref}` is valid only as the complete `provider.*.options.apiKey` value. The Manager renders it as `{env:BYOK_BRIDGE_OPENCODE_API_KEY}` (or removes `options.apiKey` for an optional provider with no key); it never expands to the plaintext credential. Environment maps continue to use `{api_key}` when the resolved key itself must be assigned to a runtime environment variable.
 
-When OpenCode is selected, the Manager writes the generated OpenCode config only to `<data-dir>/opencode.json` and launches OpenCode with `OPENCODE_CONFIG` pointing to that absolute path. The generated file contains the selected provider, all resolved model IDs, and an `{env:BYOK_CLI_HUB_OPENCODE_API_KEY}` reference when a key is required or supplied; the plaintext key is passed in the launch environment and is never stored in the file. Existing user `providers.json` files are preserved during upgrades, so installations upgrading from an earlier release must add the `opencode` CLI entry shown above if they want to enable it. Do not run concurrent Hub sessions against the same data directory.
+When OpenCode is selected, the Manager writes the generated OpenCode config only to `<data-dir>/opencode.json` and launches OpenCode with `OPENCODE_CONFIG` pointing to that absolute path. The generated file contains the selected provider, all resolved model IDs, and an `{env:BYOK_BRIDGE_OPENCODE_API_KEY}` reference when a key is required or supplied; the plaintext key is passed in the launch environment and is never stored in the file. Existing user `providers.json` files are preserved during upgrades, so installations upgrading from an earlier release must add the `opencode` CLI entry shown above if they want to enable it. Do not run concurrent Hub sessions against the same data directory.
 
 OpenCode merges higher-precedence project, inline, and managed configuration after `OPENCODE_CONFIG`, so those sources may override the generated provider or default model. Diagnose the final merged result with `opencode debug config` and `opencode models <runtime-provider-id>`; the Manager prints the runtime provider ID before launch.
 

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { readJsonStrict, writeJsonAtomic } from './state.mjs';
 
 export const OPENCODE_ADAPTER = 'opencode-config-v1';
-export const OPENCODE_API_KEY_ENV = 'BYOK_CLI_HUB_OPENCODE_API_KEY';
+export const OPENCODE_API_KEY_ENV = 'BYOK_BRIDGE_OPENCODE_API_KEY';
 export const OPENCODE_CONFIG_ENV = 'OPENCODE_CONFIG';
 export const OPENCODE_CONFIG_FILE = 'opencode.json';
 export const OPENCODE_MAX_DEPTH = 32;
@@ -162,7 +162,7 @@ export function getOpenCodeProviderId(providerId) {
   const suffix = original === slug
     ? ''
     : `-${crypto.createHash('sha256').update(original, 'utf8').digest('hex').slice(0, 8)}`;
-  return `byok-cli-hub-${slug}${suffix}`;
+  return `byok-bridge-${slug}${suffix}`;
 }
 
 export function normalizeOpenCodeModels(availableModels, chosenModel, chosenModelSource = 'first-available') {

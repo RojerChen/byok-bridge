@@ -2,11 +2,19 @@
 
 import fs from 'node:fs';
 
-const BEGIN = '# >>> BYOK CLI Hub managed shell integration >>>';
-const END = '# <<< BYOK CLI Hub managed shell integration <<<';
-const MANAGED = '# BYOK_CLI_HUB_MANAGED_BASHRC=1';
-const ORIGINAL_PREFIX = '# BYOK_CLI_HUB_BASHRC_ORIGINAL_FILE_PRESENT=';
-const NEWLINE_PREFIX = '# BYOK_CLI_HUB_BASHRC_PREFIX_NEWLINE_ADDED=';
+const BEGIN = '# >>> BYOK Bridge managed shell integration >>>';
+const END = '# <<< BYOK Bridge managed shell integration <<<';
+const MANAGED = '# BYOK_BRIDGE_MANAGED_BASHRC=1';
+const ORIGINAL_PREFIX = '# BYOK_BRIDGE_BASHRC_ORIGINAL_FILE_PRESENT=';
+const NEWLINE_PREFIX = '# BYOK_BRIDGE_BASHRC_PREFIX_NEWLINE_ADDED=';
+// These are read only during a verified 0.0.x-to-0.1.0 installer migration.
+const LEGACY = {
+  begin: '# >>> BYOK CLI Hub managed shell integration >>>',
+  end: '# <<< BYOK CLI Hub managed shell integration <<<',
+  managed: '# BYOK_CLI_HUB_MANAGED_BASHRC=1',
+  originalPrefix: '# BYOK_CLI_HUB_BASHRC_ORIGINAL_FILE_PRESENT=',
+  newlinePrefix: '# BYOK_CLI_HUB_BASHRC_PREFIX_NEWLINE_ADDED='
+};
 
 function fail(message) {
   console.error(`Error: ${message}`);
@@ -37,20 +45,27 @@ function findMarker(input, marker) {
   return { start, after };
 }
 
-function locateManagedBlock(input) {
-  const begin = findMarker(input, BEGIN);
-  const end = findMarker(input, END);
+function locateManagedBlock(input, format = {
+  begin: BEGIN,
+  end: END,
+  managed: MANAGED,
+  originalPrefix: ORIGINAL_PREFIX,
+  newlinePrefix: NEWLINE_PREFIX,
+  label: 'BYOK Bridge'
+}) {
+  const begin = findMarker(input, format.begin);
+  const end = findMarker(input, format.end);
   if (!begin && !end) return null;
   if (!begin || !end || end.start < begin.after) {
-    fail('Bash startup file contains an incomplete or out-of-order BYOK CLI Hub managed block.');
+    fail(`Bash startup file contains an incomplete or out-of-order ${format.label || 'BYOK Bridge'} managed block.`);
   }
 
   const block = input.subarray(begin.start, end.after).toString('utf8');
-  if (!block.split(/\r?\n/u).includes(MANAGED)) {
+  if (!block.split(/\r?\n/u).includes(format.managed)) {
     fail('Bash startup block has BYOK markers but no ownership marker.');
   }
-  const originalMatch = block.match(/^# BYOK_CLI_HUB_BASHRC_ORIGINAL_FILE_PRESENT=([01])$/mu);
-  const newlineMatch = block.match(/^# BYOK_CLI_HUB_BASHRC_PREFIX_NEWLINE_ADDED=([01])$/mu);
+  const originalMatch = block.match(new RegExp(`^${escapeRegExp(format.originalPrefix)}([01])$`, 'mu'));
+  const newlineMatch = block.match(new RegExp(`^${escapeRegExp(format.newlinePrefix)}([01])$`, 'mu'));
   if (!originalMatch || !newlineMatch) {
     fail('Bash startup block is missing restoration metadata.');
   }
@@ -60,6 +75,10 @@ function locateManagedBlock(input) {
     originalFilePresent: originalMatch[1] === '1',
     prefixNewlineAdded: newlineMatch[1] === '1'
   };
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 }
 
 function quoteForBash(value) {
@@ -78,7 +97,7 @@ function makeBlock(helperPath, commandPath, originalFilePresent, prefixNewlineAd
     `${ORIGINAL_PREFIX}${originalFilePresent ? '1' : '0'}`,
     `${NEWLINE_PREFIX}${prefixNewlineAdded ? '1' : '0'}`,
     `if [[ -r ${helper} ]]; then`,
-    `  source ${helper} --byok-cli-hub-managed-command ${command}`,
+    `  source ${helper} --byok-managed-command ${command}`,
     'fi',
     END,
     ''
@@ -95,6 +114,15 @@ function installBlock(input, helperPath, commandPath, inputFilePresent) {
   const prefixNewlineAdded = input.length > 0 && input[input.length - 1] !== 0x0a;
   const separator = prefixNewlineAdded ? Buffer.from('\n') : Buffer.alloc(0);
   return Buffer.concat([input, separator, makeBlock(helperPath, commandPath, inputFilePresent, prefixNewlineAdded)]);
+}
+
+function migrateBlock(input, helperPath, commandPath, inputFilePresent) {
+  const current = locateManagedBlock(input);
+  const legacy = locateManagedBlock(input, { ...LEGACY, label: 'BYOK CLI Hub' });
+  if (current && legacy) fail('Bash startup file contains both legacy and BYOK Bridge managed blocks.');
+  if (!legacy) return installBlock(input, helperPath, commandPath, inputFilePresent);
+  const replacement = makeBlock(helperPath, commandPath, legacy.originalFilePresent, legacy.prefixNewlineAdded);
+  return Buffer.concat([input.subarray(0, legacy.start), replacement, input.subarray(legacy.after)]);
 }
 
 function removeBlock(input) {
@@ -115,8 +143,8 @@ function removeBlock(input) {
 }
 
 const [action, inputPath, outputPath, helperPath, commandPath] = process.argv.slice(2);
-if (!['check-install', 'install', 'remove'].includes(action) || !inputPath) {
-  fail('Usage: bash-profile-manager.mjs check-install INPUT HELPER COMMAND | install INPUT OUTPUT HELPER COMMAND | remove INPUT OUTPUT');
+if (!['check-install', 'install', 'migrate', 'remove'].includes(action) || !inputPath) {
+  fail('Usage: bash-profile-manager.mjs check-install INPUT HELPER COMMAND | install INPUT OUTPUT HELPER COMMAND | migrate INPUT OUTPUT HELPER COMMAND | remove INPUT OUTPUT');
 }
 
 const inputFilePresent = inputPath !== '-';
@@ -129,9 +157,11 @@ if (action === 'check-install') {
 }
 
 if (!outputPath) fail(`${action} requires an output path.`);
-if (action === 'install') {
+if (action === 'install' || action === 'migrate') {
   if (!helperPath || !commandPath) fail('install requires the shell helper and command paths.');
-  fs.writeFileSync(outputPath, installBlock(input, helperPath, commandPath, inputFilePresent));
+  fs.writeFileSync(outputPath, action === 'migrate'
+    ? migrateBlock(input, helperPath, commandPath, inputFilePresent)
+    : installBlock(input, helperPath, commandPath, inputFilePresent));
   console.log('1 0');
 } else {
   const result = removeBlock(input);

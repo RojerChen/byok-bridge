@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-    start-copilot-byok.ps1 — BYOK CLI Hub manager implementation (PowerShell).
+    start-copilot-byok.ps1 — BYOK Bridge manager implementation (PowerShell).
     1. select a CLI to launch (copilot, gemini, aider, …) from clis config
     2. list providers / pick one (or -Provider <id>)
     3. resolve baseUrl / apiKey (flags, env, or interactive prompt)
@@ -117,12 +117,12 @@ function Write-ByokCmdLaunchPlan {
         foreach ($name in $Environment.Keys) {
             $lines.Add((ConvertTo-ByokCmdSetLine $name ([string]$Environment[$name])))
         }
-        $lines.Add((ConvertTo-ByokCmdSetLine '__BYOK_CLI_HUB_ACTION' 'launch'))
-        $lines.Add((ConvertTo-ByokCmdSetLine '__BYOK_CLI_HUB_EXECUTABLE' $Executable))
-        $lines.Add((ConvertTo-ByokCmdSetLine '__BYOK_CLI_HUB_ARGUMENTS' (Format-ByokCliArgsForCmd $Arguments)))
-        $lines.Add((ConvertTo-ByokCmdSetLine '__BYOK_CLI_HUB_CLI_ID' $CliId))
+        $lines.Add((ConvertTo-ByokCmdSetLine '__BYOK_BRIDGE_ACTION' 'launch'))
+        $lines.Add((ConvertTo-ByokCmdSetLine '__BYOK_BRIDGE_EXECUTABLE' $Executable))
+        $lines.Add((ConvertTo-ByokCmdSetLine '__BYOK_BRIDGE_ARGUMENTS' (Format-ByokCliArgsForCmd $Arguments)))
+        $lines.Add((ConvertTo-ByokCmdSetLine '__BYOK_BRIDGE_CLI_ID' $CliId))
     } else {
-        $lines.Add((ConvertTo-ByokCmdSetLine '__BYOK_CLI_HUB_ACTION' 'none'))
+        $lines.Add((ConvertTo-ByokCmdSetLine '__BYOK_BRIDGE_ACTION' 'none'))
     }
 
     $directory = Split-Path -Parent $Path
@@ -441,14 +441,14 @@ try {
     } else {
         Build-ByokRuntimeEnvMap $selected $base $chosenModel $apiKey $selected.id $selectedCli
     }
-    $envMap['BYOK_CLI_HUB_DATA_DIR'] = $dataDir
+    $envMap['BYOK_BRIDGE_DATA_DIR'] = $dataDir
     $openCodeOutput = $null
     $openCodeConfigPath = $null
     if ($isOpenCode -and -not $Refresh) {
         $openCodeConfigPath = Get-ByokOpenCodeConfigPath $dataDir $selectedCli.configFileName
         $openCodeOutput = Build-ByokOpenCodeConfig $selectedCli.template $selected.id $selected.name $base $apiKey ($selected.apiKeyRequired -ne $false) $availableModelSet $chosenModel $modelSelection.source
         $envMap['OPENCODE_CONFIG'] = $openCodeConfigPath
-        if ($apiKey) { $envMap['BYOK_CLI_HUB_OPENCODE_API_KEY'] = $apiKey }
+        if ($apiKey) { $envMap['BYOK_BRIDGE_OPENCODE_API_KEY'] = $apiKey }
     }
 
     $state = [ordered]@{

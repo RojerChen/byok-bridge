@@ -6,7 +6,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$appRoot = if ($env:BYOK_CLI_HUB_INSTALL_ROOT) { [IO.Path]::GetFullPath($env:BYOK_CLI_HUB_INSTALL_ROOT) } else { Join-Path $env:LOCALAPPDATA 'byok-cli-hub' }
+$appRoot = if ($env:BYOK_BRIDGE_INSTALL_ROOT) { [IO.Path]::GetFullPath($env:BYOK_BRIDGE_INSTALL_ROOT) } else { Join-Path $env:LOCALAPPDATA 'byok-bridge' }
 $targetDir = [IO.Path]::GetFullPath((Join-Path $appRoot 'app'))
 
 function Test-SameOrChild([string]$Parent, [string]$Child) {
@@ -39,11 +39,11 @@ function Resolve-ManifestPath([string]$Label, $Value) {
 
 Assert-SafePath 'install root' $appRoot
 Assert-SafePath 'application dir' $targetDir
-$manifestPath = Join-Path $targetDir '.byok-cli-hub-install.json'
-if (-not (Test-Path -LiteralPath $manifestPath)) { throw "No managed BYOK CLI Hub install was found at '$targetDir'." }
+$manifestPath = Join-Path $targetDir '.byok-bridge-install.json'
+if (-not (Test-Path -LiteralPath $manifestPath)) { throw "No managed BYOK Bridge install was found at '$targetDir'." }
 
 $manifest = Get-Content -Raw -LiteralPath $manifestPath -Encoding UTF8 | ConvertFrom-Json
-if ($manifest.product -ne 'byok-cli-hub' -or $manifest.schemaVersion -ne 1 -or "$($manifest.appVersion)" -notmatch '^\d+\.\d+\.\d+$' -or $manifest.withExtension -isnot [bool]) { throw 'The install manifest is invalid.' }
+if ($manifest.product -ne 'byok-bridge' -or $manifest.schemaVersion -ne 1 -or "$($manifest.appVersion)" -notmatch '^\d+\.\d+\.\d+$' -or $manifest.withExtension -isnot [bool]) { throw 'The install manifest is invalid.' }
 $manifestInstallDir = Resolve-ManifestPath 'installDir' $manifest.installDir
 if (-not $manifestInstallDir.Equals([IO.Path]::GetFullPath($targetDir), [StringComparison]::OrdinalIgnoreCase)) {
     throw 'The install manifest does not own the requested application path.'
@@ -62,7 +62,7 @@ $pathScript = Join-Path $targetDir 'manager\update-user-path.ps1'
 if ($LASTEXITCODE -ne 0) { throw 'Unable to remove the application directory from the user PATH.' }
 
 if ($manifest.withExtension -and (Test-Path -LiteralPath $extensionDir)) {
-    $marker = Join-Path $extensionDir '.byok-cli-hub-managed'
+    $marker = Join-Path $extensionDir '.byok-bridge-managed'
     if (Test-Path -LiteralPath $marker) {
         Remove-Item -LiteralPath $extensionDir -Recurse -Force
         Write-Host "Removed managed extension: $extensionDir"
@@ -78,8 +78,8 @@ if ((Test-Path -LiteralPath $appRoot) -and -not (Get-ChildItem -LiteralPath $app
 Write-Host "Removed application: $targetDir"
 
 if ($PurgeData -and (Test-Path -LiteralPath $dataDir)) {
-    if (-not (Test-Path -LiteralPath (Join-Path $dataDir '.byok-cli-hub-data'))) {
-        throw "Data directory has no BYOK CLI Hub ownership marker; refusing purge: $dataDir"
+    if (-not (Test-Path -LiteralPath (Join-Path $dataDir '.byok-bridge-data'))) {
+        throw "Data directory has no BYOK Bridge ownership marker; refusing purge: $dataDir"
     }
     $confirmed = [bool]$Yes
     if (-not $confirmed) {

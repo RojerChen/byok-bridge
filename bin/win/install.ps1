@@ -13,14 +13,28 @@ $appVersion = "$($sourcePackage.version)"
 if ($appVersion -notmatch '^\d+\.\d+\.\d+$') { throw 'Source package version must use numeric major.minor.patch format.' }
 $sourceSemanticVersion = [version]$appVersion
 
-$appRoot = if ($env:BYOK_CLI_HUB_INSTALL_ROOT) { [IO.Path]::GetFullPath($env:BYOK_CLI_HUB_INSTALL_ROOT) } else { Join-Path $env:LOCALAPPDATA 'byok-cli-hub' }
+$appRoot = if ($env:BYOK_BRIDGE_INSTALL_ROOT) { [IO.Path]::GetFullPath($env:BYOK_BRIDGE_INSTALL_ROOT) } else { Join-Path $env:LOCALAPPDATA 'byok-bridge' }
 $targetDir = [IO.Path]::GetFullPath((Join-Path $appRoot 'app'))
-$dataDir = if ($env:BYOK_CLI_HUB_DATA_DIR) { [IO.Path]::GetFullPath($env:BYOK_CLI_HUB_DATA_DIR) } else { Join-Path $env:USERPROFILE '.byok-cli-hub' }
+$dataDir = if ($env:BYOK_BRIDGE_DATA_DIR) { [IO.Path]::GetFullPath($env:BYOK_BRIDGE_DATA_DIR) } else { Join-Path $env:USERPROFILE '.byok-bridge' }
 $copilotHome = if ($env:COPILOT_HOME) { [IO.Path]::GetFullPath($env:COPILOT_HOME) } else { Join-Path $env:USERPROFILE '.copilot' }
-$extensionDir = [IO.Path]::GetFullPath((Join-Path $copilotHome 'extensions\byok-cli-hub-copilot'))
-$manifestName = '.byok-cli-hub-install.json'
-$markerName = '.byok-cli-hub-managed'
-$dataMarkerName = '.byok-cli-hub-data'
+$extensionDir = [IO.Path]::GetFullPath((Join-Path $copilotHome 'extensions\byok-bridge-copilot'))
+$manifestName = '.byok-bridge-install.json'
+$markerName = '.byok-bridge-managed'
+$dataMarkerName = '.byok-bridge-data'
+$legacyAppRoot = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'byok-cli-hub'))
+$legacyTargetDir = [IO.Path]::GetFullPath((Join-Path $legacyAppRoot 'app'))
+$legacyManifestName = '.byok-cli-hub-install.json'
+$legacyManifestPath = Join-Path $legacyTargetDir $legacyManifestName
+$legacyDataMarkerName = '.byok-cli-hub-data'
+$legacyExtensionMarkerName = '.byok-cli-hub-managed'
+$legacyMigration = $false
+$inlineLegacyMigration = $false
+$legacyDataDir = $null
+$legacyExtensionDir = $null
+$legacyAppVersion = $null
+$legacyDataStaging = $null
+$legacyDataSwitched = $false
+$legacyExtensionOwned = $false
 
 function Test-SameOrChild([string]$Parent, [string]$Child) {
     $p = [IO.Path]::GetFullPath($Parent).TrimEnd('\') + '\'
@@ -53,13 +67,13 @@ function Resolve-ManifestPath([string]$Label, $Value) {
 }
 
 function Invoke-FailurePoint([string]$Name) {
-    if ($env:BYOK_CLI_HUB_TEST_FAIL_AT -and $env:BYOK_CLI_HUB_TEST_FAIL_AT -eq $Name) {
+    if ($env:BYOK_BRIDGE_TEST_FAIL_AT -and $env:BYOK_BRIDGE_TEST_FAIL_AT -eq $Name) {
         throw "Injected installer failure at '$Name'."
     }
 }
 
 function Get-UserPathValue {
-    $testFile = $env:BYOK_CLI_HUB_TEST_USER_PATH_FILE
+    $testFile = $env:BYOK_BRIDGE_TEST_USER_PATH_FILE
     if ($testFile) {
         if (Test-Path -LiteralPath $testFile) { return [IO.File]::ReadAllText([IO.Path]::GetFullPath($testFile), [Text.Encoding]::UTF8) }
         return ''
@@ -68,7 +82,7 @@ function Get-UserPathValue {
 }
 
 function Restore-UserPathValue([string]$Value, [bool]$TestFileExisted) {
-    $testFile = $env:BYOK_CLI_HUB_TEST_USER_PATH_FILE
+    $testFile = $env:BYOK_BRIDGE_TEST_USER_PATH_FILE
     if ($testFile) {
         $full = [IO.Path]::GetFullPath($testFile)
         if (-not $TestFileExisted) {
@@ -81,7 +95,7 @@ function Restore-UserPathValue([string]$Value, [bool]$TestFileExisted) {
     [Environment]::SetEnvironmentVariable('Path', $Value, 'User')
 }
 
-function Test-RecognizableLegacyApplication([string]$Root) {
+function Test-RecognizableInlineLegacyApplication([string]$Root) {
     return (Test-Path -LiteralPath (Join-Path $Root 'manager\start-byok-cli-hub.ps1')) -and
         (Test-Path -LiteralPath (Join-Path $Root 'manager\ByokManager.psm1')) -and
         (Test-Path -LiteralPath (Join-Path $Root 'run.cmd')) -and
@@ -92,6 +106,16 @@ function Test-RecognizableLegacyApplication([string]$Root) {
 function Test-RecognizableLegacyExtension([string]$Path) {
     return (Test-Path -LiteralPath (Join-Path $Path 'extension.mjs')) -and
         (Test-Path -LiteralPath (Join-Path $Path 'package.json'))
+}
+
+function Read-ValidProviderConfig([string]$Path) {
+    try {
+        $configValue = Get-Content -Raw -LiteralPath $Path -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
+        Assert-ByokProviderConfig $configValue | Out-Null
+        return $configValue
+    } catch {
+        throw "Invalid provider configuration '$Path': $($_.Exception.Message)"
+    }
 }
 
 Assert-SafePath 'install root' $appRoot
@@ -105,7 +129,7 @@ Assert-NotOverlapping 'data dir' $dataDir 'extension dir' $extensionDir
 $existingManifest = Join-Path $targetDir $manifestName
 if (Test-Path -LiteralPath $existingManifest) {
     $previous = Get-Content -Raw -LiteralPath $existingManifest -Encoding UTF8 | ConvertFrom-Json
-    if ($previous.product -ne 'byok-cli-hub' -or $previous.schemaVersion -ne 1) { throw 'The existing install manifest is invalid.' }
+    if ($previous.product -ne 'byok-bridge' -or $previous.schemaVersion -ne 1) { throw 'The existing install manifest is invalid.' }
     $previousAppVersion = "$($previous.appVersion)"
     if ($previousAppVersion -notmatch '^\d+\.\d+\.\d+$') { throw 'The existing install manifest has an invalid appVersion.' }
     if ([version]$previousAppVersion -gt $sourceSemanticVersion) { throw "Refusing to downgrade installed version $previousAppVersion to $appVersion." }
@@ -121,7 +145,7 @@ if (Test-Path -LiteralPath $existingManifest) {
     Assert-NotOverlapping 'application dir' $targetDir 'manifest data dir' $manifestDataDir
     Assert-NotOverlapping 'application dir' $targetDir 'manifest extension dir' $manifestExtensionDir
     Assert-NotOverlapping 'manifest data dir' $manifestDataDir 'manifest extension dir' $manifestExtensionDir
-    if ($env:BYOK_CLI_HUB_DATA_DIR -and -not $dataDir.Equals($manifestDataDir, [StringComparison]::OrdinalIgnoreCase)) {
+    if ($env:BYOK_BRIDGE_DATA_DIR -and -not $dataDir.Equals($manifestDataDir, [StringComparison]::OrdinalIgnoreCase)) {
         throw 'A managed update cannot relocate the data directory. Uninstall and reinstall to choose a new path.'
     }
     if ($env:COPILOT_HOME -and -not $extensionDir.Equals($manifestExtensionDir, [StringComparison]::OrdinalIgnoreCase)) {
@@ -140,12 +164,53 @@ if ((Test-Path -LiteralPath $targetDir) -and -not (Test-Path -LiteralPath $exist
     throw "Refusing to replace unowned application directory '$targetDir'."
 }
 
+# The old manifest, marker and command shim form the ownership proof for an
+# automatic 0.0.x rename migration.  Do not infer ownership from a directory
+# name or copy data into an already-existing new target.
+if (-not $env:BYOK_BRIDGE_INSTALL_ROOT -and -not $env:BYOK_BRIDGE_DATA_DIR -and -not (Test-Path -LiteralPath $existingManifest) -and (Test-Path -LiteralPath $legacyManifestPath)) {
+    if (Test-Path -LiteralPath $targetDir) { throw "New application directory already exists; refusing to merge a legacy installation." }
+    if (Test-Path -LiteralPath $dataDir) { throw "New data directory already exists; refusing to merge a legacy installation." }
+    $legacyManifest = Get-Content -Raw -LiteralPath $legacyManifestPath -Encoding UTF8 | ConvertFrom-Json
+    if ($legacyManifest.product -ne 'byok-cli-hub' -or $legacyManifest.schemaVersion -ne 1 -or "$($legacyManifest.appVersion)" -notmatch '^\d+\.\d+\.\d+$' -or $legacyManifest.withExtension -isnot [bool]) {
+        throw 'The legacy install manifest is invalid. Refusing automatic migration.'
+    }
+    $manifestLegacyInstallDir = Resolve-ManifestPath 'legacy installDir' $legacyManifest.installDir
+    $legacyDataDir = Resolve-ManifestPath 'legacy dataDir' $legacyManifest.dataDir
+    $legacyExtensionDir = Resolve-ManifestPath 'legacy extensionDir' $legacyManifest.extensionDir
+    if (-not $manifestLegacyInstallDir.Equals($legacyTargetDir, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'The legacy install manifest does not own the expected application directory.'
+    }
+    Assert-SafePath 'legacy application dir' $legacyTargetDir
+    Assert-SafePath 'legacy data dir' $legacyDataDir
+    Assert-SafePath 'legacy extension dir' $legacyExtensionDir
+    Assert-NotOverlapping 'legacy application dir' $legacyTargetDir 'legacy data dir' $legacyDataDir
+    Assert-NotOverlapping 'legacy application dir' $legacyTargetDir 'legacy extension dir' $legacyExtensionDir
+    Assert-NotOverlapping 'legacy data dir' $legacyDataDir 'legacy extension dir' $legacyExtensionDir
+    if (-not (Test-Path -LiteralPath (Join-Path $legacyDataDir $legacyDataMarkerName))) {
+        throw "Legacy data directory has no ownership marker; refusing automatic migration: $legacyDataDir"
+    }
+    $legacyShim = Join-Path $legacyTargetDir 'byok-cli-hub.cmd'
+    if (-not (Test-Path -LiteralPath $legacyShim)) {
+        throw "Legacy launcher is missing; refusing automatic migration: $legacyShim"
+    }
+    if ($legacyManifest.withExtension) {
+        if (-not (Test-Path -LiteralPath (Join-Path $legacyExtensionDir $legacyExtensionMarkerName))) {
+            throw "Legacy extension has no ownership marker; refusing automatic migration: $legacyExtensionDir"
+        }
+        $WithExtension = $true
+        $legacyExtensionOwned = $true
+    }
+    $legacyAppVersion = "$($legacyManifest.appVersion)"
+    $legacyMigration = $true
+}
+
 $legacySignals = @('manager', 'run.cmd', 'byok-cli-hub.cmd') | Where-Object { Test-Path -LiteralPath (Join-Path $dataDir $_) }
-$legacyRecognized = Test-RecognizableLegacyApplication $dataDir
+$legacyRecognized = Test-RecognizableInlineLegacyApplication $dataDir
 if ($legacySignals.Count -gt 0 -and -not $legacyRecognized) {
     throw "Existing content in '$dataDir' resembles an incomplete or unknown legacy installation. Refusing automatic migration."
 }
-$isLegacyMigration = [bool]$legacyRecognized
+$inlineLegacyMigration = [bool]$legacyRecognized
+$isLegacyMigration = $legacyMigration -or $inlineLegacyMigration
 
 $extensionExists = Test-Path -LiteralPath $extensionDir
 $extensionManaged = $extensionExists -and (Test-Path -LiteralPath (Join-Path $extensionDir $markerName))
@@ -163,6 +228,23 @@ if ($isLegacyMigration -and $legacyExtensionRecognized) {
 $legacyConfig = Join-Path $dataDir 'config\providers.json'
 $configPath = Join-Path $dataDir 'providers.json'
 $examplePath = Join-Path $dataDir 'providers.example.json'
+Import-Module (Join-Path $sourceRoot 'manager\ByokManager.psm1') -DisableNameChecking -Force -ErrorAction Stop
+
+# Validate legacy settings before copying them into the new data directory. This
+# keeps a failed migration from ever creating the new path and reports the file
+# the user must repair, rather than its temporary copied location.
+if ($legacyMigration) {
+    foreach ($legacyConfigCandidate in @(
+        (Join-Path $legacyDataDir 'providers.json'),
+        (Join-Path $legacyDataDir 'config\providers.json')
+    )) {
+        if (Test-Path -LiteralPath $legacyConfigCandidate) {
+            Read-ValidProviderConfig $legacyConfigCandidate | Out-Null
+            break
+        }
+    }
+}
+
 $appRootExisted = Test-Path -LiteralPath $appRoot
 $dataDirExisted = Test-Path -LiteralPath $dataDir
 $exampleExisted = Test-Path -LiteralPath $examplePath
@@ -172,9 +254,10 @@ $createdCanonicalConfig = $false
 $transactionId = [Guid]::NewGuid().ToString('N')
 $stagingDir = Join-Path $appRoot "app.staging.$transactionId"
 $backupDir = Join-Path $appRoot "app.backup.$transactionId"
-$extensionStaging = Join-Path (Split-Path -Parent $extensionDir) "byok-cli-hub-copilot.staging.$transactionId"
-$extensionBackup = Join-Path (Split-Path -Parent $extensionDir) "byok-cli-hub-copilot.backup.$transactionId"
+$extensionStaging = Join-Path (Split-Path -Parent $extensionDir) "byok-bridge-copilot.staging.$transactionId"
+$extensionBackup = Join-Path (Split-Path -Parent $extensionDir) "byok-bridge-copilot.backup.$transactionId"
 $legacyBackup = Join-Path $appRoot "legacy-0.0.1.backup.$transactionId"
+$legacyDataStaging = Join-Path (Split-Path -Parent $dataDir) ".byok-bridge.data.staging.$transactionId"
 $dataMarkerPath = Join-Path $dataDir $dataMarkerName
 $createdDataMarker = $false
 $appBackupCreated = $false
@@ -183,28 +266,28 @@ $extensionBackupCreated = $false
 $extensionInstalled = $false
 $pathTouched = $false
 $originalUserPath = Get-UserPathValue
-$testPathFileExisted = [bool]($env:BYOK_CLI_HUB_TEST_USER_PATH_FILE -and (Test-Path -LiteralPath $env:BYOK_CLI_HUB_TEST_USER_PATH_FILE))
+$testPathFileExisted = [bool]($env:BYOK_BRIDGE_TEST_USER_PATH_FILE -and (Test-Path -LiteralPath $env:BYOK_BRIDGE_TEST_USER_PATH_FILE))
 
 try {
+    if ($legacyMigration) {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dataDir) | Out-Null
+        New-Item -ItemType Directory -Path $legacyDataStaging | Out-Null
+        Invoke-FailurePoint 'legacy-data-copy'
+        Get-ChildItem -LiteralPath $legacyDataDir -Force | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $legacyDataStaging $_.Name) -Recurse -Force
+        }
+        Move-Item -LiteralPath $legacyDataStaging -Destination $dataDir
+        $legacyDataStaging = $null
+        $legacyDataSwitched = $true
+    }
     New-Item -ItemType Directory -Force -Path $appRoot, $dataDir | Out-Null
 
     # Validate the config before creating or replacing the canonical path.
-    Import-Module (Join-Path $sourceRoot 'manager\ByokManager.psm1') -DisableNameChecking -Force -ErrorAction Stop
     if (Test-Path -LiteralPath $configPath) {
-        try {
-            $configValue = Get-Content -Raw -LiteralPath $configPath -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
-            Assert-ByokProviderConfig $configValue | Out-Null
-        } catch {
-            throw "Invalid provider configuration '$configPath': $($_.Exception.Message)"
-        }
+        $configValue = Read-ValidProviderConfig $configPath
     } else {
         $sourceConfig = if (Test-Path -LiteralPath $legacyConfig) { $legacyConfig } else { Join-Path $sourceRoot 'config\providers.example.json' }
-        try {
-            $configValue = Get-Content -Raw -LiteralPath $sourceConfig -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
-            Assert-ByokProviderConfig $configValue | Out-Null
-        } catch {
-            throw "Invalid provider configuration '$sourceConfig': $($_.Exception.Message)"
-        }
+        $configValue = Read-ValidProviderConfig $sourceConfig
         Write-ByokJsonAtomic $configPath $configValue
         $createdCanonicalConfig = $true
         Write-Host "Initialized provider configuration: $configPath"
@@ -216,10 +299,11 @@ try {
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'ui') -Destination $stagingDir -Recurse
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'extension') -Destination $stagingDir -Recurse
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'run.cmd') -Destination (Join-Path $stagingDir 'run.cmd')
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'byok-cli-hub.cmd') -Destination (Join-Path $stagingDir 'byok-cli-hub.cmd')
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'byok.cmd') -Destination (Join-Path $stagingDir 'byok.cmd')
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'uninstall.cmd') -Destination (Join-Path $stagingDir 'uninstall.cmd')
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'uninstall.ps1') -Destination (Join-Path $stagingDir 'uninstall.ps1')
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'README.md') -Destination (Join-Path $stagingDir 'README.md')
+    Copy-Item -LiteralPath (Join-Path $sourceRoot 'LICENSE') -Destination (Join-Path $stagingDir 'LICENSE')
     $documentationDir = Join-Path $stagingDir 'doc'
     New-Item -ItemType Directory -Path $documentationDir | Out-Null
     foreach ($documentationName in @('quick-start.md', 'installation.md', 'provider-configuration.md', 'usage.md', 'maintenance.md')) {
@@ -231,14 +315,14 @@ try {
 
     $manifest = [ordered]@{
         schemaVersion = 1
-        product = 'byok-cli-hub'
+        product = 'byok-bridge'
         appVersion = $appVersion
         installedAt = [DateTime]::UtcNow.ToString('o')
         installDir = $targetDir
         dataDir = $dataDir
         extensionDir = $extensionDir
         withExtension = [bool]$WithExtension
-        migratedFrom = if ($isLegacyMigration) { '0.0.1' } else { $null }
+        migratedFrom = if ($legacyMigration) { $legacyAppVersion } elseif ($inlineLegacyMigration) { '0.0.1' } else { $null }
     }
     [IO.File]::WriteAllText((Join-Path $stagingDir $manifestName), (($manifest | ConvertTo-Json -Depth 5) + "`n"), (New-Object Text.UTF8Encoding $false))
 
@@ -273,7 +357,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Installed PowerShell smoke test failed.' }
     Invoke-FailurePoint 'installed-smoke'
 
-    if ($isLegacyMigration) {
+    if ($inlineLegacyMigration) {
         New-Item -ItemType Directory -Path $legacyBackup | Out-Null
         foreach ($name in @('manager', 'run.cmd', 'byok-cli-hub.cmd', 'README.md', 'package.json')) {
             $legacyPath = Join-Path $dataDir $name
@@ -285,11 +369,16 @@ try {
     }
 
     $pathScript = Join-Path $targetDir 'manager\update-user-path.ps1'
-    $shouldSkipPath = $SkipPathUpdate -or $env:BYOK_CLI_HUB_SKIP_PATH_UPDATE -eq '1'
+    $shouldSkipPath = $SkipPathUpdate -or $env:BYOK_BRIDGE_SKIP_PATH_UPDATE -eq '1'
     if (-not $shouldSkipPath) {
         $pathTouched = $true
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $pathScript -Directory $dataDir -Remove
-        if ($LASTEXITCODE -ne 0) { throw 'Legacy user PATH removal failed.' }
+        if ($legacyMigration) {
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $pathScript -Directory $legacyTargetDir -Remove
+            if ($LASTEXITCODE -ne 0) { throw 'Legacy user PATH removal failed.' }
+        } else {
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $pathScript -Directory $dataDir -Remove
+            if ($LASTEXITCODE -ne 0) { throw 'Legacy user PATH removal failed.' }
+        }
         Invoke-FailurePoint 'after-path-remove'
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $pathScript -Directory $targetDir
         if ($LASTEXITCODE -ne 0) { throw 'User PATH update failed.' }
@@ -299,11 +388,22 @@ try {
         New-Item -ItemType File -Path $dataMarkerPath | Out-Null
         $createdDataMarker = $true
     }
+    if ($legacyMigration) {
+        Remove-Item -LiteralPath (Join-Path $dataDir $legacyDataMarkerName) -Force -ErrorAction Stop
+    }
     $exampleTouched = $true
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'config\providers.example.json') -Destination $examplePath -Force
 
     Invoke-FailurePoint 'before-backup-cleanup'
     Remove-Item -LiteralPath $backupDir, $extensionBackup, $legacyBackup -Recurse -Force -ErrorAction SilentlyContinue
+    if ($legacyMigration) {
+        Remove-Item -LiteralPath $legacyTargetDir -Recurse -Force
+        if ((Test-Path -LiteralPath $legacyAppRoot) -and -not (Get-ChildItem -LiteralPath $legacyAppRoot -Force)) {
+            Remove-Item -LiteralPath $legacyAppRoot -Force
+        }
+        if ($legacyExtensionOwned) { Remove-Item -LiteralPath $legacyExtensionDir -Recurse -Force }
+        Remove-Item -LiteralPath $legacyDataDir -Recurse -Force
+    }
 } catch {
     $failure = $_
     if ($pathTouched) {
@@ -335,6 +435,9 @@ try {
         if ($exampleExisted) { [IO.File]::WriteAllBytes($examplePath, $exampleBytes) }
         else { Remove-Item -LiteralPath $examplePath -Force -ErrorAction SilentlyContinue }
     }
+    if ($legacyDataSwitched -and (Test-Path -LiteralPath $dataDir)) {
+        Remove-Item -LiteralPath $dataDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
     if (-not $dataDirExisted -and (Test-Path -LiteralPath $dataDir) -and -not (Get-ChildItem -LiteralPath $dataDir -Force)) {
         Remove-Item -LiteralPath $dataDir -Force -ErrorAction SilentlyContinue
     }
@@ -343,7 +446,9 @@ try {
     }
     throw $failure
 } finally {
-    Remove-Item -LiteralPath $stagingDir, $extensionStaging -Recurse -Force -ErrorAction SilentlyContinue
+    @($stagingDir, $extensionStaging, $legacyDataStaging) | Where-Object { $_ } | ForEach-Object {
+        Remove-Item -LiteralPath $_ -Recurse -Force -ErrorAction SilentlyContinue
+    }
     if ((Test-Path -LiteralPath $legacyBackup) -and -not (Get-ChildItem -LiteralPath $legacyBackup -Force)) {
         Remove-Item -LiteralPath $legacyBackup -Force -ErrorAction SilentlyContinue
     }
@@ -354,5 +459,6 @@ Write-Host "Version:     $appVersion"
 Write-Host "Application: $targetDir"
 Write-Host "Data:        $dataDir"
 if ($WithExtension) { Write-Host "Extension:   $extensionDir" }
-if ($isLegacyMigration) { Write-Host 'Migrated Windows installation from version 0.0.1.' }
-Write-Host 'Open a new terminal, then run: byok-cli-hub'
+if ($legacyMigration) { Write-Host "Migrated managed BYOK CLI Hub installation from version $legacyAppVersion." }
+elseif ($inlineLegacyMigration) { Write-Host 'Migrated Windows installation from version 0.0.1.' }
+Write-Host 'Open a new terminal, then run: byok'

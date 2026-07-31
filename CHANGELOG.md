@@ -16,8 +16,10 @@ The format is intentionally simple and follows a lightweight `Keep a Changelog` 
 
 ### Changed
 
+- Renamed the product from BYOK CLI Hub to BYOK Bridge. The public command is now `byok`, the package and repository slug are `byok-bridge`, environment variables use `BYOK_BRIDGE_*`, and default user data moves to `.byok-bridge`.
+- A managed `0.0.3` installation is migrated once, transactionally, to the new application, data, command, Bash startup, extension, and Windows `PATH` names. No permanent old command or environment-variable alias is installed.
 - The default and example provider configurations now include OpenCode alongside GitHub Copilot CLI.
-- OpenCode templates now use `{api_key_ref}`, rendered as `{env:BYOK_CLI_HUB_OPENCODE_API_KEY}`; the ambiguous `{api_key_env}` name is no longer accepted. The `{api_key}` placeholder remains reserved for assigning the plaintext key to runtime environment entries.
+- OpenCode templates now use `{api_key_ref}`, rendered as `{env:BYOK_BRIDGE_OPENCODE_API_KEY}`; the ambiguous `{api_key_env}` name is no longer accepted. The `{api_key}` placeholder remains reserved for assigning the plaintext key to runtime environment entries.
 - Configured environment entries use the same semantics for every CLI: the selected CLI environment, provider-wide environment, selected provider CLI override, and configured API-key/model targets are all applied without filtering variable names.
 - Runtime JSON writes reparse the flushed temporary file before atomic replacement. OpenCode generation is limited to 32 levels, 4096 unique models, and 8 MiB of UTF-8 JSON.
 - Interactive startup now uses a clean two-step terminal UI; `NO_COLOR` and `BYOK_UI_COLOR=0` force plain-text output.
@@ -29,7 +31,7 @@ The format is intentionally simple and follows a lightweight `Keep a Changelog` 
 
 ### Security
 
-- OpenCode config authentication uses `BYOK_CLI_HUB_OPENCODE_API_KEY`; generated JSON contains an environment reference and never the plaintext key.
+- OpenCode config authentication uses `BYOK_BRIDGE_OPENCODE_API_KEY`; generated JSON contains an environment reference and never the plaintext key.
 - Template validation rejects plaintext key placeholders, unknown Hub placeholders, misplaced typed placeholders, and rendered object-key collisions.
 
 ## [0.0.3] - 2026-07-29
@@ -37,15 +39,15 @@ The format is intentionally simple and follows a lightweight `Keep a Changelog` 
 ### Added
 
 - Linux/WSL Bash integration that applies the dynamically resolved Node launch environment to the current shell, launches the configured CLI, and retains the values until the next plan, deactivation, or terminal close.
-- Versioned FD 3 shell-plan protocol, strict hex data parsing, caller-environment transaction/rollback, provider-switch cleanup, original-value restoration, and `byok-cli-hub-deactivate`/`byok-cli-hub-shell-unload` helpers.
+- Versioned FD 3 shell-plan protocol, strict hex data parsing, caller-environment transaction/rollback, provider-switch cleanup, original-value restoration, and `byok-deactivate`/`byok-shell-unload` helpers.
 - Managed installer ownership and rollback for the application-snapshot Bash library and automatic `~/.bashrc` startup block, plus Node, Bash session, xtrace, malformed-protocol, and installer regression coverage.
 
 ### Changed
 
-- Moved the Bash source-only integration from `bin/linux/shell-integration.sh` to `shell/bash/byok-cli-hub.bash`, and the installer-internal profile tool from `bin/linux/bashrc-integration.mjs` to `libexec/linux/bash-profile-manager.mjs`.
-- Linux installs now keep only the executable `byok-cli-hub` shim in `bin-dir`; the source library and profile manager are owned as part of the application snapshot.
-- The Linux install manifest now lists only the external executable shim in `managedFiles`. Managed upgrades transactionally replace the `.bashrc` source path and remove the former owned `byok-cli-hub-shell`, while rollback restores the old application, startup block, shim, and helper.
-- Unknown or unmarked files named `<bin-dir>/byok-cli-hub-shell` are preserved during update and uninstall. Windows launcher and installer paths are unchanged.
+- Moved the Bash source-only integration from `bin/linux/shell-integration.sh` to `shell/bash/byok.bash`, and the installer-internal profile tool from `bin/linux/bashrc-integration.mjs` to `libexec/linux/bash-profile-manager.mjs`.
+- Linux installs now keep only the executable `byok` shim in `bin-dir`; the source library and profile manager are owned as part of the application snapshot.
+- The Linux install manifest now lists only the external executable shim in `managedFiles`. Managed upgrades transactionally replace the `.bashrc` source path and remove the former owned `byok-shell`, while rollback restores the old application, startup block, shim, and helper.
+- Unknown or unmarked files named `<bin-dir>/byok-shell` are preserved during update and uninstall. Windows launcher and installer paths are unchanged.
 
 ### Security
 
@@ -67,7 +69,7 @@ The format is intentionally simple and follows a lightweight `Keep a Changelog` 
 
 ### Changed
 
-- Windows application files now install to `%LOCALAPPDATA%\byok-cli-hub\app`; mutable data remains in `%USERPROFILE%\.byok-cli-hub`.
+- Windows application files now install to `%LOCALAPPDATA%\byok-bridge\app`; mutable data remains in `%USERPROFILE%\.byok-bridge`.
 - Installed-mode upgrades are performed by rerunning the installer from newer release source. Repo-mode upgrades continue to use `git pull` or a release tag.
 - Both installers stage and validate the new snapshot, then use backup/switch/rollback transactions for application and optional extension updates.
 - Copilot extension installation is opt-in for fresh installs. Existing managed choices are preserved during update.
@@ -107,7 +109,7 @@ The format is intentionally simple and follows a lightweight `Keep a Changelog` 
 
 ## [0.0.1] - 2026-07-21
 
-Initial public baseline for BYOK CLI Hub.
+Initial public baseline for BYOK Bridge.
 
 ### Added
 
@@ -117,8 +119,8 @@ Initial public baseline for BYOK CLI Hub.
 - PowerShell manager scripts for starting the hub and refreshing model data.
 - Copilot extension entry point for switching models inside Copilot CLI.
 - Local state and model cache handling for runtime data.
-- `byok-cli-hub` command shim for launching from CMD or PowerShell after installation.
-- Per-user `PATH` setup and removal helper, with `BYOK_CLI_HUB_SKIP_PATH_UPDATE=1` as an opt-out.
+- `byok` command shim for launching from CMD or PowerShell after installation.
+- Per-user `PATH` setup and removal helper, with `BYOK_BRIDGE_SKIP_PATH_UPDATE=1` as an opt-out.
 
 ### Changed
 

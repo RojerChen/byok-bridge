@@ -10,7 +10,7 @@ From the repository or installed application directory:
 bin\win\uninstall.cmd
 ```
 
-The default removes the managed application, PATH entry, and manifest-owned extension while preserving `%USERPROFILE%\.byok-cli-hub`. To delete user config/state/cache too:
+The default removes the managed application, PATH entry, and manifest-owned extension while preserving `%USERPROFILE%\.byok-bridge`. To delete user config/state/cache too:
 
 ```bat
 bin\win\uninstall.cmd -PurgeData
@@ -27,7 +27,7 @@ bash bin/linux/uninstall.sh --purge-data
 bash bin/linux/uninstall.sh --purge-data --yes
 ```
 
-The uninstaller reads the managed manifest, removes only the owned application snapshot (including its Bash library), executable shim, optional extension, and managed `.bashrc` block, and preserves unrelated `.bashrc` content and user data by default. It also removes a former `<bin-dir>/byok-cli-hub-shell` only when the old manifest and file marker both prove ownership. A pre-manifest install requires `--force-legacy` and recognizable BYOK CLI Hub files. Functions already loaded in the current terminal remain available until you run `byok-cli-hub-shell-unload` or close that terminal.
+The uninstaller reads the managed manifest, removes only the owned application snapshot (including its Bash library), executable shim, optional extension, and managed `.bashrc` block, and preserves unrelated `.bashrc` content and user data by default. Functions already loaded in the current terminal remain available until you run `byok-shell-unload` or close that terminal.
 
 Neither uninstaller removes GitHub Copilot CLI or any other separately installed AI CLI.
 

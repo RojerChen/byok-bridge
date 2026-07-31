@@ -16,7 +16,7 @@ import { parseArgs, UsageError } from './lib/args.mjs';
 import { encodeShellPlan, ShellPlanError } from './lib/shell-plan.mjs';
 import { readState as readExtensionState, updateState as updateExtensionState } from '../extension/lib/shared.mjs';
 
-describe('BYOK CLI Hub Node Manager Unit & Integration Tests', () => {
+describe('BYOK Bridge Node Manager Unit & Integration Tests', () => {
   let tmpDir;
 
   beforeEach(() => {
@@ -285,14 +285,14 @@ describe('BYOK CLI Hub Node Manager Unit & Integration Tests', () => {
         TEST_NUMBER: 0
       }
     });
-    assert.match(payload, /^BYOK_CLI_HUB_SHELL_PLAN\t1\nACTION\tlaunch\n/);
+    assert.match(payload, /^BYOK_BRIDGE_SHELL_PLAN\t1\nACTION\tlaunch\n/);
     assert.ok(payload.includes(`ENV\tTEST_SECRET\t${Buffer.from('line one\nline two\t$`"').toString('hex')}\n`));
     assert.ok(payload.includes(`ARG\t${Buffer.from('$(not-executed)').toString('hex')}\n`));
     assert.doesNotMatch(payload, /export|line one|not-executed/);
     assert.throws(() => encodeShellPlan({ action: 'launch', command: 'x', args: [], environment: { PATH: '/tmp' } }), ShellPlanError);
-    assert.throws(() => encodeShellPlan({ action: 'launch', command: 'x', args: [], environment: { _BYOK_CLI_HUB_TEST: 'x' } }), ShellPlanError);
+    assert.throws(() => encodeShellPlan({ action: 'launch', command: 'x', args: [], environment: { _BYOK_BRIDGE_TEST: 'x' } }), ShellPlanError);
     assert.throws(() => encodeShellPlan({ action: 'launch', command: 'x\0y', args: [], environment: {} }), ShellPlanError);
-    assert.equal(encodeShellPlan({ action: 'none' }), 'BYOK_CLI_HUB_SHELL_PLAN\t1\nACTION\tnone\nEND\t1\n');
+    assert.equal(encodeShellPlan({ action: 'none' }), 'BYOK_BRIDGE_SHELL_PLAN\t1\nACTION\tnone\nEND\t1\n');
   });
 
   test('Manager emits a resolved launch plan on FD 3 without launching the CLI', () => {
@@ -331,7 +331,7 @@ describe('BYOK CLI Hub Node Manager Unit & Integration Tests', () => {
     ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe', 'pipe'] });
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
-    assert.match(result.output[3], /^BYOK_CLI_HUB_SHELL_PLAN\t1\nACTION\tlaunch\n/);
+    assert.match(result.output[3], /^BYOK_BRIDGE_SHELL_PLAN\t1\nACTION\tlaunch\n/);
     assert.ok(result.output[3].includes(`ENV\tTEST_KEY\t${Buffer.from('shell-secret').toString('hex')}\n`));
     assert.ok(result.output[3].includes(`COMMAND\t${Buffer.from(process.execPath).toString('hex')}\n`));
     assert.match(result.stdout, /TEST_KEY=\[set\]/);
@@ -348,7 +348,7 @@ describe('BYOK CLI Hub Node Manager Unit & Integration Tests', () => {
       '--dry-run'
     ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe', 'pipe'] });
     assert.equal(dryRun.status, 0, dryRun.stderr || dryRun.stdout);
-    assert.equal(dryRun.output[3], 'BYOK_CLI_HUB_SHELL_PLAN\t1\nACTION\tnone\nEND\t1\n');
+    assert.equal(dryRun.output[3], 'BYOK_BRIDGE_SHELL_PLAN\t1\nACTION\tnone\nEND\t1\n');
   });
 
   test('Config validation reports JSON paths and preserves a damaged user config', () => {

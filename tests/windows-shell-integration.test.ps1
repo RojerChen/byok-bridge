@@ -70,7 +70,7 @@ if not "%DUOTIFY_API_KEY%"=="test-secret" exit /b 43
 if not "%COPILOT_MODEL%"=="model-a" exit /b 44
 if not "%CLI_SELECTED_ENV%"=="model-a" exit /b 45
 if not "%PROVIDER_SELECTED_ENV%"=="duotify" exit /b 46
-if not "%BYOK_CLI_HUB_OPENCODE_API_KEY%"=="test-secret" exit /b 47
+if not "%BYOK_BRIDGE_OPENCODE_API_KEY%"=="test-secret" exit /b 47
 if not exist "%OPENCODE_CONFIG%" exit /b 48
 exit /b 0
 '@
@@ -106,7 +106,7 @@ exit /b 0
     $startInfo.RedirectStandardInput = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
-    $startInfo.EnvironmentVariables['BYOK_CLI_HUB_DATA_DIR'] = $dataDir
+    $startInfo.EnvironmentVariables['BYOK_BRIDGE_DATA_DIR'] = $dataDir
     $startInfo.EnvironmentVariables['TEMP'] = $planTemp
     $startInfo.EnvironmentVariables['TMP'] = $planTemp
     $startInfo.EnvironmentVariables['PATH'] = "$fakeBin;$($startInfo.EnvironmentVariables['PATH'])"

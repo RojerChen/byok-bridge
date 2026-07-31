@@ -1,14 +1,14 @@
 # Quick Start
 
-This guide takes you from a repository checkout to your first BYOK CLI Hub launch.
+This guide takes you from a repository checkout to your first BYOK Bridge launch.
 
 ## 1. Get a repository checkout
 
 Clone the repository, or download and extract a source archive for the version you want to use. To clone the current repository:
 
 ```bash
-git clone https://github.com/RojerChen/byok-cli-hub.git
-cd byok-cli-hub
+git clone https://github.com/RojerChen/byok-bridge.git
+cd byok-bridge
 ```
 
 Run the remaining commands from this directory.
@@ -22,7 +22,7 @@ Install at least one supported AI coding CLI and make sure it is available in `P
 
 Windows requires Windows 10/11 and PowerShell 5.1 or later. Linux and WSL2 require Bash, `realpath`, and Node.js 22 or later.
 
-## 3. Install BYOK CLI Hub
+## 3. Install BYOK Bridge
 
 From the repository root, run the command for your platform.
 
@@ -53,8 +53,8 @@ For custom paths, extension installation, upgrade behavior, and uninstall instru
 
 The installer creates your provider configuration at `<data-dir>/providers.json`:
 
-- Windows: `%USERPROFILE%\.byok-cli-hub\providers.json`
-- Linux / WSL2: `$HOME/.byok-cli-hub/providers.json`
+- Windows: `%USERPROFILE%\.byok-bridge\providers.json`
+- Linux / WSL2: `$HOME/.byok-bridge/providers.json`
 
 Add or update an OpenAI-compatible provider. Use [the example configuration](../config/providers.example.json) as a starting point, then set any required API key in an environment variable instead of saving it in `providers.json`.
 
@@ -65,7 +65,7 @@ For the complete schema and provider options, see [Provider configuration](provi
 Run:
 
 ```text
-byok-cli-hub
+byok
 ```
 
 The interactive wizard asks you to select:
@@ -75,7 +75,7 @@ The interactive wizard asks you to select:
 
 ### Select an AI coding CLI
 
-Choose the CLI that BYOK CLI Hub should start. Enter the number shown for GitHub Copilot CLI or OpenCode CLI, then press Enter.
+Choose the CLI that BYOK Bridge should start. Enter the number shown for GitHub Copilot CLI or OpenCode CLI, then press Enter.
 
 ![Select an AI coding CLI](../images/cli-selection.png)
 
@@ -91,6 +91,6 @@ OpenCode receives the discovered model list in the generated OpenCode configurat
 
 ## Next steps
 
-- Use command-line options, refresh models, or launch non-interactively: [Using BYOK CLI Hub](usage.md).
-- Switch a preloaded model from GitHub Copilot CLI with the optional extension: [Using BYOK CLI Hub](usage.md#switching-models-in-copilot).
+- Use command-line options, refresh models, or launch non-interactively: [Using BYOK Bridge](usage.md).
+- Switch a preloaded model from GitHub Copilot CLI with the optional extension: [Using BYOK Bridge](usage.md#switching-models-in-copilot).
 - Learn how credentials are protected: [Provider configuration](provider-configuration.md).

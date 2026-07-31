@@ -3,7 +3,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$Directory,
     [switch]$Remove,
-    [string]$PathValueFile = $env:BYOK_CLI_HUB_TEST_USER_PATH_FILE
+    [string]$PathValueFile = $env:BYOK_BRIDGE_TEST_USER_PATH_FILE
 )
 
 $ErrorActionPreference = 'Stop'
@@ -22,12 +22,12 @@ function Get-NormalizedPathEntry {
 function Send-EnvironmentChangedNotification {
     if ($PathValueFile) { return }
     try {
-        if (-not ('ByokCliHub.NativeMethods' -as [type])) {
+        if (-not ('ByokBridge.NativeMethods' -as [type])) {
             Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 
-namespace ByokCliHub {
+namespace ByokBridge {
     public static class NativeMethods {
         [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         public static extern IntPtr SendMessageTimeout(
@@ -44,7 +44,7 @@ namespace ByokCliHub {
         }
 
         $result = [UIntPtr]::Zero
-        [void][ByokCliHub.NativeMethods]::SendMessageTimeout(
+        [void][ByokBridge.NativeMethods]::SendMessageTimeout(
             [IntPtr]0xffff,
             0x001a,
             [UIntPtr]::Zero,

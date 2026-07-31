@@ -491,6 +491,128 @@ describe('BYOK Bridge Node Manager Unit & Integration Tests', () => {
     }
   });
 
+  test('CMD plan module encodes values safely and rejects injection-prone inputs', async () => {
+    const { writeCmdPlan, formatCmdArgs, CmdPlanError } = await import('./lib/cmd-plan.mjs');
+    const planPath = path.join(tmpDir, 'test-plan.cmd');
+
+    // action=none produces a minimal file
+    writeCmdPlan(planPath, { action: 'none' });
+    const noneContent = fs.readFileSync(planPath, 'utf8');
+    assert.match(noneContent, /@echo off/);
+    assert.match(noneContent, /set "__BYOK_BRIDGE_ACTION=none"/);
+    assert.doesNotMatch(noneContent, /EXECUTABLE|ARGUMENTS/);
+    fs.unlinkSync(planPath);
+
+    // action=launch sets env and control vars
+    writeCmdPlan(planPath, {
+      action: 'launch',
+      command: 'C:\\tools\\cli.exe',
+      args: ['--flag', '--other-flag'],
+      environment: { MY_KEY: 'my-value', PERCENT: '100%' },
+      cliId: 'testcli'
+    });
+    const launchContent = fs.readFileSync(planPath, 'utf8');
+    assert.match(launchContent, /set "MY_KEY=my-value"/);
+    assert.match(launchContent, /set "PERCENT=100%%"/);
+    assert.match(launchContent, /set "__BYOK_BRIDGE_ACTION=launch"/);
+    assert.match(launchContent, /set "__BYOK_BRIDGE_EXECUTABLE=C:\\tools\\cli\.exe"/);
+    assert.match(launchContent, /set "__BYOK_BRIDGE_ARGUMENTS=--flag --other-flag"/);
+    assert.match(launchContent, /set "__BYOK_BRIDGE_CLI_ID=testcli"/);
+    fs.unlinkSync(planPath);
+
+    // Args with spaces produce double-quotes → rejected by ARGUMENTS encoding
+    assert.throws(() => writeCmdPlan(planPath, {
+      action: 'launch', command: 'x',
+      args: ['value with spaces'],
+      environment: {}
+    }), CmdPlanError);
+
+    // Rejects bad env names
+    assert.throws(() => writeCmdPlan(planPath, {
+      action: 'launch', command: 'x', args: [],
+      environment: { 'BAD-NAME': 'value' }
+    }), CmdPlanError);
+
+    // Rejects values with NUL, CR, LF, double-quote
+    for (const bad of ['\0', '\r', '\n', '"']) {
+      assert.throws(() => writeCmdPlan(planPath, {
+        action: 'launch', command: 'x', args: [],
+        environment: { SAFE_NAME: `bad${bad}value` }
+      }), CmdPlanError);
+    }
+
+    // formatCmdArgs: simple args join with spaces; args with spaces get quoted
+    assert.equal(formatCmdArgs([]), '');
+    assert.equal(formatCmdArgs(['simple']), 'simple');
+    assert.equal(formatCmdArgs(['a', 'b']), 'a b');
+    // Double-quote produced by quoting gets caught at the writeCmdPlan level
+    assert.equal(formatCmdArgs(['with space']), '"with space"');
+
+    // formatCmdArgs rejects args with control chars
+    assert.throws(() => formatCmdArgs(['\0bad']), CmdPlanError);
+  });
+
+  test('Manager emits a CMD plan file via --internal-cmd-plan-file', () => {
+    const config = {
+      version: 1,
+      clis: {
+        test: {
+          command: process.execPath,
+          args: ['--version'],
+          environment: {
+            TEST_URL: '{url}',
+            TEST_KEY: '{api_key}',
+            TEST_MODEL: '{model}'
+          }
+        }
+      },
+      providers: {
+        static: {
+          baseUrl: 'https://example.test/v1',
+          apiKeyEnv: ['TEST_KEY'],
+          models: ['model-a'],
+          environment: {}
+        }
+      }
+    };
+    writeJsonAtomic(path.join(tmpDir, 'providers.json'), config);
+    const planPath = path.join(tmpDir, 'launch-plan.cmd');
+    const managerPath = fileURLToPath(new URL('./manager.mjs', import.meta.url));
+    const result = spawnSync(process.execPath, [
+      managerPath,
+      '--internal-cmd-plan-file', planPath,
+      '--data-dir', tmpDir,
+      '--cli', 'test',
+      '--provider', 'static',
+      '--model', 'model-a',
+      '--api-key', 'cmd-secret'
+    ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(fs.existsSync(planPath), 'plan file must be created');
+    const planContent = fs.readFileSync(planPath, 'utf8');
+    assert.match(planContent, /set "__BYOK_BRIDGE_ACTION=launch"/);
+    assert.match(planContent, /set "TEST_KEY=/);
+    assert.match(planContent, /set "TEST_MODEL=model-a"/);
+    assert.match(planContent, /set "__BYOK_BRIDGE_EXECUTABLE=/);
+    assert.match(planContent, /set "__BYOK_BRIDGE_CLI_ID=test"/);
+    // API key must not appear in stdout or stderr
+    assert.doesNotMatch(result.stdout + result.stderr, /cmd-secret/);
+    // Dry-run with CMD plan file → action=none
+    const planPathDry = path.join(tmpDir, 'dry-plan.cmd');
+    const dry = spawnSync(process.execPath, [
+      managerPath,
+      '--internal-cmd-plan-file', planPathDry,
+      '--data-dir', tmpDir,
+      '--cli', 'test',
+      '--provider', 'static',
+      '--model', 'model-a',
+      '--dry-run'
+    ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    assert.equal(dry.status, 0, dry.stderr);
+    assert.match(fs.readFileSync(planPathDry, 'utf8'), /set "__BYOK_BRIDGE_ACTION=none"/);
+  });
+
   test('Extension performs a locked state merge and preserves damaged state', () => {
     writeState({ providerId: 'alpha', providerName: 'Alpha', model: 'old' }, tmpDir);
     updateExtensionState(current => ({ ...current, model: 'new' }), tmpDir);

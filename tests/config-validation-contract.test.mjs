@@ -390,7 +390,7 @@ test('Node config validator follows the shared acceptance contract', () => {
 });
 
 test('PowerShell config validator follows the shared acceptance contract', {
-  skip: process.platform !== 'win32'
+  skip: 'PowerShell implementation removed in Phase 5 of nodejs-migration-plan.md'
 }, () => {
   const powershell = 'powershell.exe';
   const available = spawnSync(powershell, ['-NoProfile', '-Command', 'exit 0']);

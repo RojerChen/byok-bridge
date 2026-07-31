@@ -33,6 +33,38 @@ export function isExecutableInPath(command) {
 }
 
 /**
+ * Resolves a command name to its full absolute path in PATH.
+ * Returns the first matching path, or null if not found.
+ * On Windows, prefers .exe > .cmd > .bat > (extensionless).
+ */
+export function resolveExecutablePath(command) {
+  if (!command) return null;
+  if (path.isAbsolute(command)) {
+    try {
+      fs.accessSync(command, process.platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK);
+      return fs.statSync(command).isFile() ? command : null;
+    } catch { return null; }
+  }
+
+  const PATH = process.env.PATH || '';
+  const pathDirs = PATH.split(path.delimiter);
+  const extensions = process.platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : [''];
+
+  for (const dir of pathDirs) {
+    for (const ext of extensions) {
+      const fullPath = path.join(dir, command + ext);
+      try {
+        if (fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
+          if (process.platform !== 'win32') fs.accessSync(fullPath, fs.constants.X_OK);
+          return fullPath;
+        }
+      } catch {}
+    }
+  }
+  return null;
+}
+
+/**
  * Launches the selected CLI executable with resolved arguments and environment map.
  */
 export async function launchCli(command, args = [], envMap = {}, options = {}) {

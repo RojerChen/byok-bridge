@@ -35,7 +35,7 @@ async function waitForFile(filePath, timeoutMs = 5000) {
 }
 
 test('Node and PowerShell preserve concurrent provider cache updates', {
-  skip: process.platform !== 'win32'
+  skip: 'PowerShell implementation removed in Phase 5 of nodejs-migration-plan.md'
 }, async () => {
   const powershell = 'powershell.exe';
   const available = spawnSync(powershell, ['-NoProfile', '-Command', 'exit 0']);
@@ -86,29 +86,15 @@ test('Node and PowerShell recover an abandoned cache lock', async () => {
     updateCacheForProvider('node-recovered', 'https://node.example/v1', '/models', ['node-model'], dataDir);
     assert.equal(fs.existsSync(lockPath), false);
 
-    if (process.platform === 'win32') {
-      const powershell = 'powershell.exe';
-      const available = spawnSync(powershell, ['-NoProfile', '-Command', 'exit 0']);
-      if (available.status === 0) {
-        createAbandonedLock();
-        const psModule = path.join(repoRoot, 'manager', 'ByokManager.psm1').replaceAll("'", "''");
-        const psDataDir = dataDir.replaceAll("'", "''");
-        const script = `Import-Module '${psModule}' -DisableNameChecking; Update-ByokCacheForProvider -ProviderId 'powershell-recovered' -BaseUrl 'https://powershell.example/v1' -ApiPath '/models' -ModelIds @('powershell-model') -DataDir '${psDataDir}' | Out-Null`;
-        await run(powershell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script]);
-        assert.equal(fs.existsSync(lockPath), false);
-      }
-    }
-
     const cache = readCache(dataDir);
     assert.equal(cache.caches['node-recovered'].models[0].id, 'node-model');
-    if (process.platform === 'win32') assert.equal(cache.caches['powershell-recovered'].models[0].id, 'powershell-model');
   } finally {
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
 });
 
 test('Node and PowerShell honor their deadlines for an active aged exclusive lock', {
-  skip: process.platform !== 'win32'
+  skip: 'PowerShell implementation removed in Phase 5 of nodejs-migration-plan.md'
 }, async () => {
   const powershell = 'powershell.exe';
   const available = spawnSync(powershell, ['-NoProfile', '-Command', 'exit 0']);

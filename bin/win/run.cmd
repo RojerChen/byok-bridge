@@ -1,28 +1,59 @@
 @echo off
-rem The public CMD entry point applies the resolved environment to this caller
-rem console. This intentionally keeps provider/model/key values available for
-rem the next invocation, matching the original 0.0.1 Windows contract.
-set "_BYOK_BRIDGE_PSEXE=pwsh"
-where pwsh >nul 2>nul
-if errorlevel 1 set "_BYOK_BRIDGE_PSEXE=powershell"
+rem run.cmd - Windows launcher for BYOK Bridge.
+rem Calls the Node.js manager to resolve the execution plan, then applies the
+rem resulting environment to this caller CMD console and launches the CLI.
+rem
+rem Node.js 22 or later is required. Install from https://nodejs.org/
 
-set "_BYOK_BRIDGE_ROOT=%~dp0"
-if not exist "%_BYOK_BRIDGE_ROOT%manager\start-byok-bridge.ps1" set "_BYOK_BRIDGE_ROOT=%~dp0..\..\"
-set "_BYOK_BRIDGE_ENV_FILE=%TEMP%\byok-bridge-env-%RANDOM%-%RANDOM%.cmd"
+rem --- Node.js preflight check ---------------------------------------------
+where node >nul 2>nul
+if errorlevel 1 (
+    echo Error: Node.js was not found in PATH.
+    echo BYOK Bridge requires Node.js 22 or later. Install from https://nodejs.org/
+    exit /b 1
+)
+for /f "tokens=*" %%v in ('node --version 2^>nul') do set "_BYOK_NODE_VER=%%v"
+set "_BYOK_NODE_VER=%_BYOK_NODE_VER:v=%"
+for /f "tokens=1 delims=." %%m in ("%_BYOK_NODE_VER%") do set "_BYOK_NODE_MAJOR=%%m"
+if "%_BYOK_NODE_MAJOR%"=="" (
+    echo Error: Could not determine Node.js version.
+    set "_BYOK_NODE_VER=" & set "_BYOK_NODE_MAJOR="
+    exit /b 1
+)
+if %_BYOK_NODE_MAJOR% LSS 22 (
+    echo Error: Node.js 22 or later is required. Current version: %_BYOK_NODE_VER%
+    echo Install the latest LTS release from https://nodejs.org/
+    set "_BYOK_NODE_VER=" & set "_BYOK_NODE_MAJOR="
+    exit /b 1
+)
+set "_BYOK_NODE_VER=" & set "_BYOK_NODE_MAJOR="
+
+rem --- Locate manager.mjs --------------------------------------------------
+rem Installed snapshots place run.cmd beside manager. A repository checkout
+rem keeps it under bin\win\, two levels below the repository root.
+set "_BYOK_BRIDGE_MANAGER=%~dp0manager\manager.mjs"
+if not exist "%_BYOK_BRIDGE_MANAGER%" set "_BYOK_BRIDGE_MANAGER=%~dp0..\..\manager\manager.mjs"
+if not exist "%_BYOK_BRIDGE_MANAGER%" (
+    echo Error: Could not locate manager\manager.mjs relative to run.cmd.
+    exit /b 1
+)
+
+rem --- Prepare the CMD plan temp file -------------------------------------
+set "_BYOK_BRIDGE_CMD_PLAN=%TEMP%\byok-bridge-plan-%RANDOM%-%RANDOM%.cmd"
 set "__BYOK_BRIDGE_ACTION="
 set "__BYOK_BRIDGE_EXECUTABLE="
 set "__BYOK_BRIDGE_ARGUMENTS="
 set "__BYOK_BRIDGE_CLI_ID="
 
-%_BYOK_BRIDGE_PSEXE% -NoProfile -ExecutionPolicy Bypass -File "%_BYOK_BRIDGE_ROOT%manager\start-byok-bridge.ps1" -EnvFile "%_BYOK_BRIDGE_ENV_FILE%" %*
+node "%_BYOK_BRIDGE_MANAGER%" --internal-cmd-plan-file "%_BYOK_BRIDGE_CMD_PLAN%" %*
 set "_BYOK_BRIDGE_MANAGER_EXIT=%errorlevel%"
 if not "%_BYOK_BRIDGE_MANAGER_EXIT%"=="0" goto :manager_failed
-if not exist "%_BYOK_BRIDGE_ENV_FILE%" goto :missing_plan
+if not exist "%_BYOK_BRIDGE_CMD_PLAN%" goto :missing_plan
 
-call "%_BYOK_BRIDGE_ENV_FILE%"
+call "%_BYOK_BRIDGE_CMD_PLAN%"
 set "_BYOK_BRIDGE_PLAN_EXIT=%errorlevel%"
-del /q "%_BYOK_BRIDGE_ENV_FILE%" >nul 2>nul
-set "_BYOK_BRIDGE_ENV_FILE="
+del /q "%_BYOK_BRIDGE_CMD_PLAN%" >nul 2>nul
+set "_BYOK_BRIDGE_CMD_PLAN="
 if not "%_BYOK_BRIDGE_PLAN_EXIT%"=="0" goto :plan_failed
 if /i "%__BYOK_BRIDGE_ACTION%"=="none" goto :success
 if /i not "%__BYOK_BRIDGE_ACTION%"=="launch" goto :invalid_plan
@@ -39,7 +70,7 @@ if /i "%__BYOK_BRIDGE_CLI_ID%"=="opencode" if not "%_BYOK_BRIDGE_EXIT%"=="0" (
 goto :cleanup
 
 :manager_failed
-if exist "%_BYOK_BRIDGE_ENV_FILE%" del /q "%_BYOK_BRIDGE_ENV_FILE%" >nul 2>nul
+if exist "%_BYOK_BRIDGE_CMD_PLAN%" del /q "%_BYOK_BRIDGE_CMD_PLAN%" >nul 2>nul
 set "_BYOK_BRIDGE_EXIT=%_BYOK_BRIDGE_MANAGER_EXIT%"
 goto :cleanup
 
@@ -63,9 +94,8 @@ set "_BYOK_BRIDGE_EXIT=0"
 
 :cleanup
 set "_BYOK_BRIDGE_RETURN=%_BYOK_BRIDGE_EXIT%"
-set "_BYOK_BRIDGE_PSEXE="
-set "_BYOK_BRIDGE_ROOT="
-set "_BYOK_BRIDGE_ENV_FILE="
+set "_BYOK_BRIDGE_MANAGER="
+set "_BYOK_BRIDGE_CMD_PLAN="
 set "_BYOK_BRIDGE_MANAGER_EXIT="
 set "_BYOK_BRIDGE_PLAN_EXIT="
 set "__BYOK_BRIDGE_ACTION="

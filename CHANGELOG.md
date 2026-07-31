@@ -8,14 +8,20 @@ The format is intentionally simple and follows a lightweight `Keep a Changelog` 
 
 ### Added
 
+- Node.js-based Windows installer and uninstaller, with transactional application updates, managed-install compatibility, legacy-install detection, and user `PATH` management.
+- A CMD execution-plan transport that lets the Windows launcher apply resolved provider, model, and runtime environment values to the calling CMD session before launching the selected CLI.
 - OpenCode CLI support on Windows and Linux/WSL through the `opencode-config-v1` adapter.
 - Atomic generation of `<data-dir>/opencode.json`, with deterministic runtime provider IDs, exact case-sensitive model maps, explicit model-selection provenance, and `OPENCODE_CONFIG` launch wiring.
-- Cross-platform interactive wizard for selecting an AI coding CLI and BYOK provider, with shared theme and message resources for the Node.js and PowerShell implementations.
-- `--no-clear` (Linux/WSL) and `-NoClear` (Windows) options, plus `BYOK_UI_HISTORY=true`, for retaining prior wizard screens.
-- Node, PowerShell 5.1, dry-run, preflight-preservation, environment-scope, special-model-ID, and plaintext-secret regression coverage.
+- Cross-platform interactive wizard for selecting an AI coding CLI and BYOK provider, with shared theme and message resources.
+- `--no-clear` and `BYOK_UI_HISTORY=true` options for retaining prior wizard screens.
+- Node-manager, Windows-installer, dry-run, preflight-preservation, environment-scope, special-model-ID, and plaintext-secret regression coverage, including a documented behavior matrix.
 
 ### Changed
 
+- Windows installation, uninstallation, and launch flows now use the Node.js manager; the previous PowerShell manager modules and entry-point scripts have been retired.
+- Node.js 22 or later is now required on Windows as well as Linux and WSL2. Windows command shims validate this prerequisite and report a clear error when it is unavailable.
+- The Windows launcher resolves the selected CLI executable before emitting its CMD execution plan, so the plan does not depend on later `PATH` changes in the caller session.
+- Windows test commands now run the Node-based installer and behavior-matrix suites instead of the retired PowerShell test suites.
 - Renamed the product from BYOK CLI Hub to BYOK Bridge. The public command is now `byok`, the package and repository slug are `byok-bridge`, environment variables use `BYOK_BRIDGE_*`, and default user data moves to `.byok-bridge`.
 - A managed `0.0.3` installation is migrated once, transactionally, to the new application, data, command, Bash startup, extension, and Windows `PATH` names. No permanent old command or environment-variable alias is installed.
 - The default and example provider configurations now include OpenCode alongside GitHub Copilot CLI.
@@ -26,6 +32,7 @@ The format is intentionally simple and follows a lightweight `Keep a Changelog` 
 
 ### Fixed
 
+- During an interactive model refresh, an authentication failure without an API key now prompts for a key and retries once instead of immediately failing.
 - The Windows installer now reports the exact existing `providers.json` path when strict JSON parsing or semantic validation fails, while preserving the invalid file unchanged.
 - Restored the Windows `0.0.1` caller-CMD contract: resolved provider, model, API-key, and OpenCode runtime variables remain in the current console and can be reused by the next invocation.
 

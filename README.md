@@ -34,7 +34,7 @@ BYOK Bridge includes an optional extension developed specifically for GitHub Cop
 
 ## Quick start
 
-Before installing, make sure at least one supported CLI (`copilot` or `opencode`) is available in `PATH`. Linux and WSL2 also require Node.js 22 or later.
+Before installing, make sure at least one supported CLI (`copilot` or `opencode`) is available in `PATH`, and **Node.js 22 or later** is installed (required on Windows, Linux, and WSL2).
 
 1. Install from a repository checkout:
 

@@ -13,7 +13,8 @@ const VALUE_OPTIONS = new Map([
   ['--api-key', 'apiKey'],
   ['--model', 'model'],
   ['--data-dir', 'dataDir'],
-  ['--internal-shell-plan-fd', 'internalShellPlanFd']
+  ['--internal-shell-plan-fd', 'internalShellPlanFd'],
+  ['--internal-cmd-plan-file', 'internalCmdPlanFile']
 ]);
 
 const FLAG_OPTIONS = new Map([
@@ -37,6 +38,7 @@ export function parseArgs(argv) {
     help: false,
     dataDir: null,
     internalShellPlanFd: null,
+    internalCmdPlanFile: null,
     passthroughArgs: []
   };
   const seen = new Set();
@@ -83,7 +85,12 @@ export function parseArgs(argv) {
   if (options.internalShellPlanFd !== null && options.internalShellPlanFd !== '3') {
     throw new UsageError("Option '--internal-shell-plan-fd' only accepts the internal descriptor 3.");
   }
-  const semanticSeen = [...seen].filter(option => option !== 'internalShellPlanFd');
+  if (options.internalCmdPlanFile !== null) {
+    if (typeof options.internalCmdPlanFile !== 'string' || !options.internalCmdPlanFile.trim()) {
+      throw new UsageError("Option '--internal-cmd-plan-file' requires a non-empty absolute path.");
+    }
+  }
+  const semanticSeen = [...seen].filter(option => !['internalShellPlanFd', 'internalCmdPlanFile'].includes(option));
   if (options.help && semanticSeen.length > 1) throw new UsageError('--help cannot be combined with other options.');
   if (options.selfCheck) {
     const selfCheckOptions = new Set(['selfCheck', 'dataDir']);

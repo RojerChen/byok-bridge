@@ -312,7 +312,7 @@ describe('OpenCode config adapter', () => {
     assert.equal(state.runtimeConfigType, 'opencode-config-v1');
   });
 
-  test('PowerShell manager writes and loads the generated OpenCode config path', { skip: process.platform !== 'win32' }, () => {
+  test('PowerShell manager writes and loads the generated OpenCode config path', { skip: 'PowerShell implementation removed in Phase 5 of nodejs-migration-plan.md' }, () => {
     writeManagerConfig(tmpDir, 'pwsh', false);
     const providerConfigPath = path.join(tmpDir, 'providers.json');
     const providerConfig = JSON.parse(fs.readFileSync(providerConfigPath, 'utf8'));

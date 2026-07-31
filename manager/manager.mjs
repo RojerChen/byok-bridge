@@ -24,7 +24,7 @@ import {
   getSensitiveEnvKeys
 } from './lib/env.mjs';
 import { parseArgs, UsageError } from './lib/args.mjs';
-import { fetchModels, getSafeModelFetchErrorMessage, canUseStaleCacheForModelFetchError } from './lib/http.mjs';
+import { fetchModels, getSafeModelFetchErrorMessage, canUseStaleCacheForModelFetchError, ModelFetchError } from './lib/http.mjs';
 import {
   InputCancelledError,
   NonInteractiveInputError,
@@ -44,8 +44,9 @@ import {
   renderUiSummary,
   uiMessage
 } from './lib/ui.mjs';
-import { isExecutableInPath, launchCli } from './lib/launcher.mjs';
+import { isExecutableInPath, resolveExecutablePath, launchCli } from './lib/launcher.mjs';
 import { writeShellPlan } from './lib/shell-plan.mjs';
+import { writeCmdPlan } from './lib/cmd-plan.mjs';
 import {
   OPENCODE_ADAPTER,
   OPENCODE_API_KEY_ENV,
@@ -60,23 +61,23 @@ let uiForErrors = null;
 
 function printHelp() {
   console.log(`
-BYOK Bridge Manager (Linux / Node.js)
+BYOK Bridge Manager
 
 Usage:
   byok [options] [-- [CLI_ARGS...]]
 
 Options:
-  --cli ID          Select CLI to launch (e.g. copilot)
-  --provider ID     Select Provider ID (use '+' to add a new provider interactively)
-  --base-url URL    Override Base URL
-  --api-key KEY     Supply API key (Warning: visible in process list)
-  --model ID        Select model ID
-  --data-dir DIR    Override data directory
-  --refresh         Refresh model cache from provider
-  --dry-run         Display resolved parameters & env map without launching
-  --no-clear        Keep prior screens instead of clearing an interactive terminal
-  --self-check      Run environment preflight checks
-  --help, -h        Display this help message
+  --cli ID                   Select CLI to launch (e.g. copilot, opencode)
+  --provider ID              Select Provider ID (use '+' to add a new provider interactively)
+  --base-url URL             Override Base URL
+  --api-key KEY              Supply API key (Warning: visible in process list)
+  --model ID                 Select model ID
+  --data-dir DIR             Override data directory
+  --refresh                  Refresh model cache from provider
+  --dry-run                  Display resolved parameters & env map without launching
+  --no-clear                 Keep prior screens instead of clearing an interactive terminal
+  --self-check               Run environment preflight checks
+  --help, -h                 Display this help message
 `);
 }
 
@@ -110,6 +111,18 @@ function emitShellPlan(options, plan) {
   if (options.internalShellPlanFd !== null) {
     writeShellPlan(Number(options.internalShellPlanFd), plan);
   }
+}
+
+function emitCmdPlan(options, plan) {
+  if (options.internalCmdPlanFile !== null) {
+    writeCmdPlan(options.internalCmdPlanFile, plan);
+  }
+}
+
+/** Emit the execution plan to whichever transport(s) are configured. */
+function emitPlan(options, plan) {
+  emitShellPlan(options, plan);
+  emitCmdPlan(options, plan);
 }
 
 function throwRenderedUiError(ui, messageId, values = {}) {
@@ -146,14 +159,14 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
     printHelp();
-    emitShellPlan(options, { action: 'none' });
+    emitPlan(options, { action: 'none' });
     return 0;
   }
   const dataDir = getByokDataDir(options.dataDir);
 
   if (options.selfCheck) {
     const exitCode = await runSelfCheck(dataDir);
-    if (exitCode === 0) emitShellPlan(options, { action: 'none' });
+    if (exitCode === 0) emitPlan(options, { action: 'none' });
     return exitCode;
   }
 
@@ -270,7 +283,7 @@ async function main() {
         const result = await selectCliInteractively();
         if (result.exit) {
           renderUiStatus(ui, 'exited');
-          emitShellPlan(options, { action: 'none' });
+          emitPlan(options, { action: 'none' });
           return 0;
         }
         selectedCli = result;
@@ -299,7 +312,7 @@ async function main() {
       }
       if (result.item.id === '__exit') {
         renderUiStatus(ui, 'exited');
-        emitShellPlan(options, { action: 'none' });
+        emitPlan(options, { action: 'none' });
         return 0;
       }
       if (result.item.id === '+') {
@@ -380,13 +393,36 @@ async function main() {
       try {
         fetchedModelIds = await fetchModels(selectedProvider, baseUrl, apiKey);
       } catch (err) {
-        const safeMessage = getSafeModelFetchErrorMessage(err, apiKey);
-        if (!options.refresh && cachedModels.length > 0 && canUseStaleCacheForModelFetchError(err)) {
-          availableModels = cachedModels;
-          console.warn(`Warning: model refresh failed; using stale cache for '${selectedProvider.id}': ${safeMessage}`);
-        } else {
-          console.error(`Error fetching models: ${safeMessage}`);
-          process.exit(1);
+        // If the server returned 401/403 and no key was supplied yet, offer an
+        // interactive retry so users with optional keys can provide one without
+        // re-running the command (mirrors the PowerShell manager behaviour).
+        if (!apiKey && err instanceof ModelFetchError && err.category === 'auth'
+            && interactive && selectedProvider.apiKeyRequired !== false) {
+          beginInteractive({ cli: selectedCli.name, provider: selectedProvider.name });
+          const retryKey = await readMaskedPrompt(`${uiMessage(ui, 'prompts', 'apiKey', { provider: selectedProvider.name })}: `);
+          if (retryKey) {
+            apiKey = retryKey;
+            fromPrompt = true;
+            try {
+              fetchedModelIds = await fetchModels(selectedProvider, baseUrl, apiKey);
+            } catch (retryErr) {
+              err = retryErr;
+              // Fall through to normal error handling below
+            }
+          } else {
+            throwRenderedUiError(ui, 'apiKeyRequired', { provider: selectedProvider.name });
+          }
+        }
+        // Normal error handling (also reached after a failed retry)
+        if (fetchedModelIds.length === 0) {
+          const safeMessage = getSafeModelFetchErrorMessage(err, apiKey);
+          if (!options.refresh && cachedModels.length > 0 && canUseStaleCacheForModelFetchError(err)) {
+            availableModels = cachedModels;
+            console.warn(`Warning: model refresh failed; using stale cache for '${selectedProvider.id}': ${safeMessage}`);
+          } else {
+            console.error(`Error fetching models: ${safeMessage}`);
+            process.exit(1);
+          }
         }
       }
 
@@ -465,6 +501,11 @@ async function main() {
   };
 
   const command = selectedCli.command || 'copilot';
+  // For the CMD plan transport, resolve to the full executable path so that
+  // run.cmd can `call` it without relying on the caller's PATH state.
+  const resolvedCommand = options.internalCmdPlanFile !== null
+    ? (resolveExecutablePath(command) ?? command)
+    : command;
   const shouldLaunch = !options.dryRun && !options.refresh;
   if (shouldLaunch && !isExecutableInPath(command)) {
     console.error(`Error: The command '${command}' was not found in PATH.`);
@@ -506,7 +547,7 @@ async function main() {
 
   if (options.refresh) {
     console.log('Model cache refresh complete.');
-    emitShellPlan(options, { action: 'none' });
+    emitPlan(options, { action: 'none' });
     return 0;
   }
 
@@ -516,17 +557,18 @@ async function main() {
       dryRun: true,
       sensitiveKeys
     });
-    emitShellPlan(options, { action: 'none' });
+    emitPlan(options, { action: 'none' });
     return exitCode;
   }
 
-  if (options.internalShellPlanFd !== null) {
+  if (options.internalShellPlanFd !== null || options.internalCmdPlanFile !== null) {
     renderUiStatus(ui, 'launching', { cli: selectedCli.name });
-    emitShellPlan(options, {
+    emitPlan(options, {
       action: 'launch',
-      command,
+      command: resolvedCommand,
       args: resolvedLaunchArgs,
-      environment: envMap
+      environment: envMap,
+      cliId: selectedCli.id
     });
     return 0;
   }

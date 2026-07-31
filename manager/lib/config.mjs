@@ -416,12 +416,16 @@ export function addProvider(name, baseUrl, apiKey = '', cli = null, dataDir = ge
   const generatedKeyName = `${id.toUpperCase().replace(/[^A-Z0-9_]/g, '_')}_API_KEY`;
   const apiKeyEnv = [...new Set([generatedKeyName, ...cliKeyTargets])];
   const apiKeyEnvName = apiKeyEnv[0];
+  const apiKeyProvided = Boolean(String(apiKey).trim());
   const newProvider = {
     name: cleanName,
     enabled: true,
     type: 'openai',
     baseUrl: cleanUrl,
-    apiKeyRequired: true,
+    // The interactive add-provider flow explicitly allows an empty key.  Persist
+    // that choice so a later launch does not turn the optional prompt into a
+    // required credential prompt.
+    apiKeyRequired: apiKeyProvided,
     modelCacheTtlSeconds: 3600,
     apiKeyEnv,
     modelEnvNames: [...new Set(cliModelTargets)],
@@ -434,5 +438,5 @@ export function addProvider(name, baseUrl, apiKey = '', cli = null, dataDir = ge
   raw.providers[id] = newProvider;
   validateConfig(raw);
   writeJsonAtomic(targetPath, raw);
-  return { id, configPath: targetPath, apiKeyEnvName, provider: newProvider, apiKeyProvided: Boolean(apiKey) };
+  return { id, configPath: targetPath, apiKeyEnvName, provider: newProvider, apiKeyProvided };
 }

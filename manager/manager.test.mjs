@@ -73,6 +73,12 @@ describe('BYOK Bridge Node Manager Unit & Integration Tests', () => {
     assert.ok(found);
     assert.equal(found.name, 'My Custom Endpoint');
     assert.equal(found.baseUrl, 'http://127.0.0.1:5000/v1');
+    assert.equal(found.apiKeyRequired, true);
+
+    const optional = addProvider('No-Key Endpoint', 'http://127.0.0.1:5001/v1', '', null, tmpDir);
+    const optionalProvider = loadProviderConfig(tmpDir).providers.find(provider => provider.id === optional.id);
+    assert.ok(optionalProvider);
+    assert.equal(optionalProvider.apiKeyRequired, false);
   });
 
   test('State & Cache atomic read and write', () => {

@@ -49,7 +49,9 @@ The installer adds the Hub's Bash integration to `~/.bashrc`. `exec bash` reload
 
 For custom paths, extension installation, upgrade behavior, and uninstall instructions, see [Installation and upgrades](installation.md).
 
-## 4. Configure a provider
+## 4. Configure providers manually (optional)
+
+Use this option when you want to predefine providers before launching the wizard. Otherwise, skip to the next step and add a provider from the Provider screen when needed.
 
 The installer creates your provider configuration at `<data-dir>/providers.json`:
 
@@ -79,11 +81,23 @@ Choose the CLI that BYOK Bridge should start. Enter the number shown for GitHub 
 
 ![Select an AI coding CLI](../images/cli-selection.png)
 
-### Select a BYOK provider
+### Select or add a BYOK provider
 
-Choose an enabled provider from your `providers.json`. The entries shown depend on your configuration; enter the number for the provider you want to use, then press Enter.
+Choose an enabled provider from your `providers.json`, or select **Add Provider** to create one from the wizard. The entries shown depend on your configuration; enter the number for the provider you want to use, then press Enter.
 
 ![Select a BYOK provider](../images/provider-selection.png)
+
+#### Add a provider from the wizard (optional)
+
+Start any local model server or make sure the remote provider is reachable. After selecting **Add Provider**, enter:
+
+- **Provider display name**: a label you will recognise in the menu, such as `Local LM Studio`.
+- **Base URL**: the provider's OpenAI-compatible API root, such as `http://localhost:1234/v1` for LM Studio. Include the `/v1` prefix when the provider requires it.
+- **API key**: press Enter for a local or other provider that does not require authentication. The new provider is saved as not requiring a key, so later launches do not prompt for one.
+
+![Adding a custom provider from the wizard](../images/add-provider.png)
+
+For a provider that requires authentication, enter its key when prompted or supply it through an environment variable. BYOK Bridge never writes API keys to `providers.json`; a key entered in the wizard is available only for the current launch.
 
 After these two choices, the Hub retrieves or reuses the selected provider's cached model list through its configured `/models` API, then launches the selected CLI with the provider's previously selected model. If there is no previous model, it uses the first discovered model. Press Ctrl+C to cancel.
 

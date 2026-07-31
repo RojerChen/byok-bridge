@@ -131,10 +131,18 @@ try {
     if (-not $custom) { throw "added provider not found after reload" }
     if ($custom.baseUrl -ne 'https://custom.example.com/v1') { throw "added provider baseUrl mismatch: $($custom.baseUrl)" }
     if ($custom.type -ne 'openai') { throw "added provider type mismatch: $($custom.type)" }
+    if ($custom.apiKeyRequired -ne $true) { throw 'provider with an API key should require it on future launches' }
     $map2 = Build-ByokRuntimeEnvMap $custom 'https://custom.example.com/v1' 'm1' 'sk-custom' 'my-custom-llm' $copilotCli
     if ($map2.COPILOT_PROVIDER_API_KEY -ne 'sk-custom') { throw "added provider env map key mismatch" }
     if ($map2.COPILOT_PROVIDER_BASE_URL -ne 'https://custom.example.com/v1') { throw "added provider env map url mismatch" }
     if ($map2.BYOK_MODEL_PROVIDER_ID -ne 'my-custom-llm') { throw "added provider env map id mismatch" }
+
+    # An Enter at the optional key prompt creates a provider that remains
+    # keyless on future launches.
+    $addedNoKey = Add-ByokProvider -Name 'No Key Provider' -BaseUrl 'https://no-key.example.com/v1/' -ApiKey '' -DataDir $dataDir
+    $noKeyProvider = (Load-ByokProviderConfig $dataDir).providers | Where-Object { $_.id -eq $addedNoKey.id } | Select-Object -First 1
+    if (-not $noKeyProvider) { throw 'no-key provider not found after reload' }
+    if ($noKeyProvider.apiKeyRequired -ne $false) { throw 'no-key provider should not require an API key' }
 
     # Add-ByokProvider with -Cli gemini: defaults derived from CLI config.
     $geminiCliObj = [pscustomobject][ordered]@{

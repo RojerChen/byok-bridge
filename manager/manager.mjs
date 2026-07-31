@@ -302,9 +302,14 @@ async function main() {
         emitShellPlan(options, { action: 'none' });
         return 0;
       }
-      selectedProvider = result.item.id === '+'
-        ? await invokeAddProviderFlow(ui, selectedCli, dataDir)
-        : result.item;
+      if (result.item.id === '+') {
+        // Move the custom-provider form onto its own screen instead of
+        // leaving it appended to the provider selection menu.
+        beginInteractive({ cli: selectedCli.name });
+        selectedProvider = await invokeAddProviderFlow(ui, selectedCli, dataDir);
+      } else {
+        selectedProvider = result.item;
+      }
     }
     renderUiStatus(ui, 'selectedProvider', { provider: selectedProvider.name });
   }

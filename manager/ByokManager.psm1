@@ -1207,12 +1207,14 @@ function Add-ByokProvider {
 
     $envName = (($id.ToUpper() -replace '[^A-Z0-9]+', '_').Trim('_')) + '_API_KEY'
     $apiKeyEnvList = @(@($envName) + @($defaultApiKeyEnv) | Select-Object -Unique)
+    $apiKeyProvided = -not [string]::IsNullOrWhiteSpace($ApiKey)
 
     $provider = [pscustomobject][ordered]@{
         name          = $name
         enabled       = $true
         type          = 'openai'
         baseUrl       = $url
+        apiKeyRequired = $apiKeyProvided
         apiKeyEnv     = $apiKeyEnvList
         modelEnvNames = @($defaultModelEnvNames)
         apiKeyHeader  = 'Authorization'

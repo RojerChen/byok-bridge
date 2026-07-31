@@ -321,7 +321,14 @@ try {
                 Complete-ByokUiExit
                 return
             }
-            $selected = if ($choice.id -eq '+') { Invoke-AddProviderFlow -Cli $selectedCli } else { $choice }
+            if ($choice.id -eq '+') {
+                # Render the custom-provider form on a fresh screen rather
+                # than appending it below the provider selection menu.
+                & $script:ByokUiInteractive $selectedCli.name
+                $selected = Invoke-AddProviderFlow -Cli $selectedCli
+            } else {
+                $selected = $choice
+            }
         }
         Write-ByokUiStatus $script:ByokUi 'selectedProvider' @{ provider = $selected.name }
     }

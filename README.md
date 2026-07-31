@@ -6,7 +6,7 @@ Stop editing environment variables, configuration files, and model settings ever
 
 > Select a CLI. Select a provider. Start coding.
 
-The Hub automatically discovers available models and prepares the correct CLI configuration before launch.
+It automatically discovers available models and prepares the correct CLI configuration before launch.
 
 ![BYOK Bridge workflow: select a CLI, select a provider, and start coding](images/hero-workflow.png)
 
@@ -53,7 +53,7 @@ Before installing, make sure at least one supported CLI (`copilot` or `opencode`
 
 2. Configure an OpenAI-compatible provider in `<data-dir>/providers.json`. Start with [the example configuration](config/providers.example.json) or follow the [Provider Configuration guide](doc/provider-configuration.md).
 
-3. Launch the Hub:
+3. Launch BYOK Bridge:
 
    ```text
    byok

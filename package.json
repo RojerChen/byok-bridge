@@ -14,6 +14,9 @@
     "test:linux-installer": "bash tests/linux-installer.test.sh",
     "test:linux-shell": "bash tests/linux-shell-integration.test.sh",
     "test:all:windows": "npm run test:node && npm run smoke && npm run test:powershell-http && npm run test:windows-shell && npm run test:windows-installer",
-    "test:all:linux": "npm run test:node && npm run test:linux-shell && npm run test:linux-installer"
+    "test:all:linux": "npm run test:node && npm run test:linux-shell && npm run test:linux-installer",
+    "bump:patch": "node scripts/bump-version.mjs patch",
+    "bump:minor": "node scripts/bump-version.mjs minor",
+    "bump:major": "node scripts/bump-version.mjs major"
   }
 }

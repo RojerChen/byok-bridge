@@ -1,0 +1,67 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in BYOK Bridge.
+title: "[Bug] "
+labels:
+  - bug
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug.
+
+        **Please do not include API keys, access tokens, or other sensitive information.**
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - Windows
+        - Linux
+        - WSL2
+    validations:
+      required: true
+
+  - type: input
+    id: cli
+    attributes:
+      label: AI Coding CLI
+      placeholder: "GitHub Copilot CLI 1.0.xx / OpenCode x.x.x"
+
+  - type: input
+    id: provider
+    attributes:
+      label: Provider
+      placeholder: "LM Studio / Ollama / LiteLLM / OpenRouter"
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the problem
+      description: What happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: |
+        Remove API keys, tokens, internal URLs, and other sensitive information before posting.
